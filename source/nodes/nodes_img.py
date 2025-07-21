@@ -60,6 +60,9 @@ if has_load_image:
                        "built-in LoadImage logic.")
         UNIQUE_NAME = "SET_ImageDownload"
         DISPLAY_NAME = "Image Download and Load"
+        # This node stores a result to disk. So this IS an output node.
+        # It can be used without connecting any other node.
+        # Declaring it as output helps with the preview mechanism.
         OUTPUT_NODE = True
 
         def load_or_download_image(self, base_url: str, filename: str, image_bypass: Optional[torch.Tensor] = None,
@@ -86,6 +89,7 @@ if has_load_image:
                 if not base_url.endswith('/'):
                     base_url += '/'
                 download_url = base_url + filename
+                # Notify the user in the GUI (browser)
                 send_toast_notification(f"Downloading `{filename}`", "Download")
 
                 try:
@@ -93,6 +97,7 @@ if has_load_image:
                 except Exception as e:
                     logger.error(f"Download failed for {download_url}: {e}", exc_info=True)
                     raise
+                # Notify the user in the GUI (browser)
                 send_toast_notification("Finished downloading", "Download", 'success')
             else:
                 logger.info(f"Found existing file, skipping download: '{local_filepath}'")
@@ -110,6 +115,8 @@ if has_load_image:
 
                 # Call the method and return its result directly
                 result = loader_instance.load_image(filename)
+                # This information is for the preview, as we are an output node and we return images
+                # they will be displayed in our node. Quite simple.
                 downloaded_file = {
                      "images": [{
                          "filename": filename,

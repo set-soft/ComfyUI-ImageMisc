@@ -1,9 +1,13 @@
 [project]
 name = "image-misc"
-description = "Miscellaneous nodes for image manipulation. Currently just download image with bypass, so you can create workflows including image examples. No extra dependencies."
-version = "1.0.0"
-license = { file = "LICENSE" }
-dependencies = []
+description = """
+Miscellaneous nodes for image manipulation.
+Currently just download image with bypass, so you can create workflows including image examples.
+No extra dependencies, just an internal module.
+"""
+dynamic = ["version"]
+license = "GPL-3.0-or-later"
+dependencies = ["seconohe"]
 
 [project.urls]
 Repository = "https://github.com/set-soft/ComfyUI-ImageMisc"
@@ -11,3 +15,6 @@ Repository = "https://github.com/set-soft/ComfyUI-ImageMisc"
 [tool.comfy]
 PublisherId = "set-soft"
 DisplayName = "Image Misc"
+
+[tool.setuptools.dynamic]
+version = {attr = "nodes.__version__"}

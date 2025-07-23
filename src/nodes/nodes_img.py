@@ -7,7 +7,7 @@
 import os
 from seconohe.downloader import download_file
 # We are the main source, so we use the main_logger
-from seconohe.logger import main_logger
+from . import main_logger
 import torch
 from typing import Optional
 try:
@@ -91,7 +91,7 @@ if has_load_image:
                 download_url = base_url + filename
 
                 try:
-                    download_file(url=download_url, save_dir=save_dir, file_name=filename, kind="image")
+                    download_file(logger, url=download_url, save_dir=save_dir, file_name=filename, kind="image")
                 except Exception as e:
                     logger.error(f"Download failed for {download_url}: {e}", exc_info=True)
                     raise

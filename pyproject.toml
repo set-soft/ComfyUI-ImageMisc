@@ -5,8 +5,12 @@ Miscellaneous nodes for image manipulation.
 Currently just download image with bypass, so you can create workflows including image examples.
 No extra dependencies, just an internal module.
 """
-dynamic = ["version"]
-license = "GPL-3.0-or-later"
+# This is the modern Python mechanism, but not supported
+# dynamic = ["version"]
+# license = "GPL-3.0-or-later"
+# Only this is supported :-(
+version = "1.1.0"
+license = { file = "LICENSE" }
 dependencies = ["seconohe"]
 
 [project.urls]
@@ -18,3 +22,36 @@ DisplayName = "Image Misc"
 
 [tool.setuptools.dynamic]
 version = {attr = "nodes.__version__"}
+
+# #######################################
+# MyPy (well, yours, useless hinting)
+# #######################################
+[tool.mypy]
+# Basic configuration
+python_version = "3.11"
+warn_return_any = true
+warn_unused_ignores = true
+mypy_path = "src/"
+
+# This is often needed when starting out, especially with libraries that lack stubs
+ignore_missing_imports = true
+
+# You can get stricter over time by removing ignore_missing_imports
+# and setting flags like these:
+# disallow_untyped_defs = true
+# disallow_any_unimported = true
+
+# Tell mypy to ignore errors from third-party libraries if they are not typed
+[[tool.mypy.overrides]]
+module = [
+    "torch.*",
+    "torchaudio.*",
+    "pytest.*",
+    "cv2.*",
+    "colorama.*",
+    "tqdm.*",
+    "requests.*",
+    "comfy.*", # For comfy.utils
+    "server.*" # For server.PromptServer
+]
+ignore_missing_imports = true

@@ -18,7 +18,7 @@ except ModuleNotFoundError:
         return ""
 try:
     # We need to import the built-in LoadImage class for ImageDownload
-    from nodes import LoadImage  # type: ignore[attr-defined]
+    from nodes import LoadImage
     has_load_image = True
 except Exception:
     has_load_image = False

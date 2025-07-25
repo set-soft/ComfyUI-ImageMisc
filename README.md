@@ -53,13 +53,15 @@ You can install the nodes from the ComfyUI nodes manager, the name is *Image Mis
     cd ComfyUI/custom_nodes/
     git clone https://github.com/set-soft/ComfyUI-ImageMisc ComfyUI-ImageMisc
     ```
-2.  Restart ComfyUI.
+2.  Install SeCoNoHe: `pip install seconohe`
+3.  Restart ComfyUI.
 
 The nodes should then appear under the "image/io" category in the "Add Node" menu.
 
 
 ## &#x0001F4E6; Dependencies
 
+- SeCoNoHe (seconohe): This is just some functionality I wrote shared by my nodes, only depends on ComfyUI.
 - PyTorch: Installed by ComfyUI
 - Requests (optional): Usually an indirect ComfyUI dependency. If installed it will be used for downloads, it should be more robust than then built-in `urllib`, used as fallback.
 - Colorama (optional): Might help to get colored log messages on some terminals. We use ANSI escape sequences when it isn't installed.

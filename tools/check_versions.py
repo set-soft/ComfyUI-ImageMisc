@@ -10,6 +10,7 @@ PYPROJECT_PATH = Path("pyproject.toml")
 SOURCE_VERSION_PATH = Path("src/nodes/__init__.py")
 # --- End Configuration ---
 
+
 def get_version_from_pyproject(file_path: Path) -> str | None:
     """Extracts the version string from a pyproject.toml file."""
     try:
@@ -73,6 +74,7 @@ def main() -> int:
         print(f"  {SOURCE_VERSION_PATH} has version '{source_version}'", file=sys.stderr)
         print("  Please ensure both versions are identical.", file=sys.stderr)
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

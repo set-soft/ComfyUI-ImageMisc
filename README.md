@@ -1,13 +1,12 @@
 # ComfyUI Image Miscellaneous Nodes &#x0001f3a8;
 
 This repository provides a set of custom nodes for ComfyUI focused on image manipulation.
-Currently we just have an image downloader node, but I didn't wanted to put it with
-my audio nodes.
+Currently we just have a few nodes used by other nodes I maintain.
 
 
 ## &#x2699;&#xFE0F; Main features
 
-&#x2705; No extra dependencies, we use the same modules as ComfyUI
+&#x2705; No bizarre extra dependencies, we use the same modules as ComfyUI
 
 &#x2705; Warnings and errors visible in the browser, configurable debug information in the console
 
@@ -18,7 +17,9 @@ my audio nodes.
 - &#x0001F4E6; [Dependencies](#-dependencies)
 - &#x0001F5BC;&#xFE0F; [Examples](#&#xFE0F;-examples)
 - &#x2728; [Nodes](#-extra-nodes)
-  - [1. Image Download and Load](#1-image-download-and-load)
+  - [Image Download and Load](#1-image-download-and-load)
+  - [Face Composite](#2-face-composite)
+  - [Face Composite (frame by frame)](#3-face-composite-frame-by-frame)
 - &#x0001F4DD; [Usage Notes](#-usage-notes)
 - &#x0001F4DC; [Project History](#-project-history)
 - &#x2696;&#xFE0F; [License](#&#xFE0F;-license)
@@ -43,6 +44,42 @@ my audio nodes.
      - **Caching:** The node checks the `ComfyUI/input/` folder first. If the file with the specified `filename` already exists, the download is skipped.
      - **Bypass:** If only one of `image_bypass` and `mask_bypass` is connected the other will be assumed to be empty. You should connect both or avoid using the output corresponding to the unconnected input.
 
+### 2. Face Composite
+   - **Display Name:** `Face Composite`
+   - **Internal Name:** `SET_CompositeFace`
+   - **Category:** `image/manipulation`
+   - **Description:** This node is designed for complex batch operations where a single reference image generates multiple animated or processed frames. It handles an **M-to-N** relationship.
+   - **Purpose:** The primary use case is for animation workflows (e.g., using AnimateDiff or SVD) where you:
+      1.  Extract a face from **one** source image.
+      2.  Generate **N** animated frames of that face.
+      3.  Paste each of the **N** animated frames back onto the original source image to create an animated sequence.
+   - **Inputs:**
+     - `animated` (`IMAGE`): A batch of `M*N` cropped/processed images (e.g., the animated faces).
+     - `reference` (`IMAGE`): A batch of `M` original context images that the faces were extracted from.
+     - `bboxes` (`BBOX`): A list of `M` bounding boxes. Each box in the list must correspond to a `reference` image, defining the location for the paste operation. Format: (X, Y, W, H)
+   - **Output:**
+     - `images` (`IMAGE`): The final output batch of `M*N` full-size images. Each image consists of a `reference` image with one of the `animated` frames pasted onto it.
+   - **How it Works:**
+     - For each of the `M` reference images and its corresponding bounding box, the node takes the next `N` frames from the `animated` batch. It then pastes each of these `N` frames onto a *copy* of the reference image, generating `N` final output frames. This process is repeated for all `M` reference images.
+     - The animated frame is automatically resized to fit the bounding box dimensions before pasting. The pasting logic safely handles cases where the bbox is partially outside the image boundaries.
+
+### 3. Face Composite (frame by frame)
+   - **Display Name:** `"Face Composite (frame by frame)`
+   - **Internal Name:** `SET_CompositeFaceFrameByFrame`
+   - **Category:** `image/manipulation`
+   - **Description:** This node is a simplified variant for **1-to-1** compositing. It is perfect for video processing workflows where you need to paste a sequence of processed frames back into the original video sequence at a static location.
+   - **Purpose:** Ideal for tasks like video face restoration, stylization, or simple lip-sync, where:
+      1.  A video is loaded as a sequence of `N` frames.
+      2.  A corresponding sequence of `N` processed/animated frames is generated.
+      3.  Each processed frame needs to be pasted back into its corresponding original frame at the same location.
+   - **Inputs:**
+     - `animated` (`IMAGE`): A batch of `N` processed frames.
+     - `reference` (`IMAGE`): A batch of `N` original frames. **Must have the same batch size as `animated`**.
+     - `bboxes` (`BBOX`): A list of bounding boxes. **Only the first bbox in the list is used** as the static paste location for all frames.
+   - **Output:**
+     - `images` (`IMAGE`): The final batch of `N` composited frames.
+   - **How it Works:** The node iterates from frame 0 to N-1. In each step, it takes the i-th `animated` frame and the i-th `reference` frame. It then pastes the animated frame onto the reference frame using the coordinates from the single, static bounding box.
+
 
 ## &#x0001F680; Installation
 
@@ -53,7 +90,7 @@ You can install the nodes from the ComfyUI nodes manager, the name is *Image Mis
     cd ComfyUI/custom_nodes/
     git clone https://github.com/set-soft/ComfyUI-ImageMisc ComfyUI-ImageMisc
     ```
-2.  Install SeCoNoHe: `pip install seconohe`
+2.  Install dependencies: `pip install -r ComfyUI/custom_nodes/ComfyUI-ImageMisc/requirements.txt`
 3.  Restart ComfyUI.
 
 The nodes should then appear under the "image/io" category in the "Add Node" menu.
@@ -63,6 +100,8 @@ The nodes should then appear under the "image/io" category in the "Add Node" men
 
 - SeCoNoHe (seconohe): This is just some functionality I wrote shared by my nodes, only depends on ComfyUI.
 - PyTorch: Installed by ComfyUI
+- NumPy: Installed by ComfyUI
+- Pillow: Installed by ComfyUI
 - Requests (optional): Usually an indirect ComfyUI dependency. If installed it will be used for downloads, it should be more robust than then built-in `urllib`, used as fallback.
 - Colorama (optional): Might help to get colored log messages on some terminals. We use ANSI escape sequences when it isn't installed.
 

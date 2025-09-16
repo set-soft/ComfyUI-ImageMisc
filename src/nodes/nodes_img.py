@@ -11,6 +11,7 @@ from seconohe.downloader import download_file
 # We are the main source, so we use the main_logger
 from . import main_logger
 import torch
+import torchvision.transforms.functional as TF
 from typing import Optional
 try:
     from folder_paths import get_input_directory   # To get the ComfyUI input directory
@@ -29,6 +30,7 @@ logger = main_logger
 BASE_CATEGORY = "image"
 IO_CATEGORY = "io"
 MANIPULATION_CATEGORY = "manipulation"
+NORMALIZATION = "normalization"
 
 
 def tensor_to_pil(tensor: torch.Tensor) -> Image.Image:
@@ -315,3 +317,73 @@ class CompositeFaceFrameByFrame(CompositeFace):
         final_batch = torch.stack(output_images)
 
         return (final_batch,)
+
+
+class NormalizeToImageNetDataset():
+    """
+    A ComfyUI node to normalize the values to the mean/std of the ImageNet dataset
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+            },
+        }
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("image",)
+    FUNCTION = "normalize"
+    CATEGORY = BASE_CATEGORY + "/" + NORMALIZATION
+    DESCRIPTION = ("Normalize the image to the ImageNet dataset")
+    UNIQUE_NAME = "SET_NormalizeToImageNetDataset"
+    DISPLAY_NAME = "Normalize Image to ImageNet"
+    imagenet_normalize = None
+
+    def normalize(self, image: torch.Tensor):
+        return (TF.normalize(image.permute(0, 3, 1, 2),  # BHWC -> BCHW
+                             mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225]).permute(0, 2, 3, 1),)  # BCHW -> BHWC
+
+
+class NormalizeToRangeMinus05to05():
+    """
+    A ComfyUI node to normalize the values to the [-0.5, 0.5] range
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"image": ("IMAGE",), }, }
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("image",)
+    FUNCTION = "normalize"
+    CATEGORY = BASE_CATEGORY + "/" + NORMALIZATION
+    DESCRIPTION = ("Normalize the image to [-0.5, 0.5]")
+    UNIQUE_NAME = "SET_NormalizeToRangeMinus05to05"
+    DISPLAY_NAME = "Normalize Image to [-0.5, 0.5]"
+    imagenet_normalize = None
+
+    def normalize(self, image: torch.Tensor):
+        return (TF.normalize(image.permute(0, 3, 1, 2),  # BHWC -> BCHW
+                             mean=[0.5, 0.5, 0.5],
+                             std=[1.0, 1.0, 1.0]).permute(0, 2, 3, 1),)  # BCHW -> BHWC
+
+
+class NormalizeToRangeMinus1to1():
+    """
+    A ComfyUI node to normalize the values to the [-1, 1] range
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"image": ("IMAGE",), }, }
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("image",)
+    FUNCTION = "normalize"
+    CATEGORY = BASE_CATEGORY + "/" + NORMALIZATION
+    DESCRIPTION = ("Normalize the image to [-1, 1]")
+    UNIQUE_NAME = "SET_NormalizeToRangeMinus1to1"
+    DISPLAY_NAME = "Normalize Image to [-1, 1] (i.e. GAN)"
+    imagenet_normalize = None
+
+    def normalize(self, image: torch.Tensor):
+        return (TF.normalize(image.permute(0, 3, 1, 2),  # BHWC -> BCHW
+                             mean=[0.5, 0.5, 0.5],
+                             std=[0.5, 0.5, 0.5]).permute(0, 2, 3, 1),)  # BCHW -> BHWC

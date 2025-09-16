@@ -20,6 +20,9 @@ Currently we just have a few nodes used by other nodes I maintain.
   - [Image Download and Load](#1-image-download-and-load)
   - [Face Composite](#2-face-composite)
   - [Face Composite (frame by frame)](#3-face-composite-frame-by-frame)
+  - [Normalize Image to ImageNet](#4-normalize-image-to-imagenet)
+  - [Normalize Image to [-0.5, 0.5]](#5-normalize-image-to-05-05)
+  - [Normalize Image to [-1, 1]](#6-normalize-image-to-1-1)
 - &#x0001F4DD; [Usage Notes](#-usage-notes)
 - &#x0001F4DC; [Project History](#-project-history)
 - &#x2696;&#xFE0F; [License](#&#xFE0F;-license)
@@ -80,6 +83,50 @@ Currently we just have a few nodes used by other nodes I maintain.
      - `images` (`IMAGE`): The final batch of `N` composited frames.
    - **How it Works:** The node iterates from frame 0 to N-1. In each step, it takes the i-th `animated` frame and the i-th `reference` frame. It then pastes the animated frame onto the reference frame using the coordinates from the single, static bounding box.
 
+
+### 4. Normalize Image to ImageNet
+   - **Display Name:** `"Normalize Image to ImageNet`
+   - **Internal Name:** `SET_NormalizeToImageNetDataset`
+   - **Category:** `image/normalization`
+   - **Description:** Normalizes an image tensor using the mean and standard deviation of the ImageNet dataset.
+   - **Purpose:** Essential for pre-processing images before feeding them into models that were pre-trained on ImageNet (e.g., most ResNet, VGG, EfficientNet models).
+   - **Inputs:**
+     - `image` (`IMAGE`): A standard ComfyUI image tensor in the `[0, 1]` range.
+   - **Output:**
+     - `image` (`IMAGE`): The normalized image tensor. The value range will be altered significantly.
+   - **How it Works:**  For each channel, it performs the operation `output = (input - mean) / std`, using the standard ImageNet values:
+    - **Mean:** `[0.485, 0.456, 0.406]`
+    - **Std Dev:** `[0.229, 0.224, 0.225]`
+
+### 5. Normalize Image to [-0.5, 0.5]
+
+- **Display Name:** `Normalize Image to [-0.5, 0.5]`
+- **Internal Name:** `SET_NormalizeToMinus05_05`
+- **Category:** `image/normalization`
+- **Description:** Normalizes an image tensor by centering its values around zero.
+- **Purpose:** Useful for models trained from scratch or those that expect input data in the `[-0.5, 0.5]` range. This can help stabilize training.
+- **Inputs:**
+  - `image` (`IMAGE`): A standard ComfyUI image tensor in the `[0, 1]` range.
+- **Output:**
+  - `image` (`IMAGE`): The normalized image tensor, with values in the `[-0.5, 0.5]` range.
+- **How it Works:** For each channel, it performs the operation `output = (input - mean) / std`, using:
+  - **Mean:** `[0.5, 0.5, 0.5]`
+  - **Std Dev:** `[1.0, 1.0, 1.0]`
+
+### 6. Normalize Image to [-1, 1]
+
+- **Display Name:** `Normalize Image to [-1, 1]`
+- **Internal Name:** `SET_NormalizeToMinus1_1`
+- **Category:** `image/normalization`
+- **Description:** Normalizes an image tensor to the `[-1, 1]` range.
+- **Purpose:** A common requirement for certain model architectures, particularly Generative Adversarial Networks (GANs) and models using the `tanh` activation function in their output layer.
+- **Inputs:**
+  - `image` (`IMAGE`): A standard ComfyUI image tensor in the `[0, 1]` range.
+- **Output:**
+  - `image` (`IMAGE`): The normalized image tensor, with values in the `[-1, 1]` range.
+- **How it Works:** For each channel, it performs the operation `output = (input - mean) / std`, using:
+  - **Mean:** `[0.5, 0.5, 0.5]`
+  - **Std Dev:** `[0.5, 0.5, 0.5]`
 
 ## &#x0001F680; Installation
 

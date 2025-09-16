@@ -23,6 +23,7 @@ Currently we just have a few nodes used by other nodes I maintain.
   - [Normalize Image to ImageNet](#4-normalize-image-to-imagenet)
   - [Normalize Image to [-0.5, 0.5]](#5-normalize-image-to-05-05)
   - [Normalize Image to [-1, 1]](#6-normalize-image-to-1-1)
+  - [Apply Mask using AFFCE](#7-apply-mask-using-affce)
 - &#x0001F4DD; [Usage Notes](#-usage-notes)
 - &#x0001F4DC; [Project History](#-project-history)
 - &#x2696;&#xFE0F; [License](#&#xFE0F;-license)
@@ -127,6 +128,25 @@ Currently we just have a few nodes used by other nodes I maintain.
 - **How it Works:** For each channel, it performs the operation `output = (input - mean) / std`, using:
   - **Mean:** `[0.5, 0.5, 0.5]`
   - **Std Dev:** `[0.5, 0.5, 0.5]`
+
+### 7. Apply Mask using AFFCE
+
+- **Display Name:** `Apply Mask using AFFCE`
+- **Internal Name:** `SET_ApplyMaskAFFCE`
+- **Category:** `image/manipulation
+- **Description:** Applies a mask to an image using [Approximate Fast Foreground Colour Estimation](https://github.com/Photoroom/fast-foreground-estimation). This blends the image contour in a better way.
+- **Purpose:** Used to apply the mask of a background removal model.
+- **Inputs:**
+  - `images` (`IMAGE`): One ore more ComfyUI images
+  - `masks` (`MASK`): Masks to apply
+  - `blur_size` (`INT`): Diameter for the coarse gaussian blur
+  - `blur_size_two` (`INT`): Diameter for the fine gaussian blur
+  - `fill_color` (`BOOLEAN`): When enabled the removed image is replaced by a color, the output is an RGB image. Otherwise the removed part becomes transparent and the output is an RGBA image.
+  - `color` (`STRING`): A string representing a color to be used when `fill_color` is enabled. Can be an hexadecimal RGB (i.e. `#AABBCC`) or comma separated RGB components. The components can be in the [0-255] or [0-1.0] range.
+- **Output:**
+  - `image` (`IMAGE`): The image after applying the mask.
+  - `mask` (`MASK`): The input mask
+
 
 ## &#x0001F680; Installation
 

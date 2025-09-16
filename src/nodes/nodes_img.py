@@ -7,6 +7,7 @@
 import numpy as np
 import os
 from PIL import Image  # Import the Python Imaging Library
+from seconohe.apply_mask import apply_mask
 from seconohe.downloader import download_file
 # We are the main source, so we use the main_logger
 from . import main_logger
@@ -15,6 +16,7 @@ import torchvision.transforms.functional as TF
 from typing import Optional
 try:
     from folder_paths import get_input_directory   # To get the ComfyUI input directory
+    from comfy import model_management
 except ModuleNotFoundError:
     # No ComfyUI, this is a test environment
     def get_input_directory():
@@ -31,6 +33,13 @@ BASE_CATEGORY = "image"
 IO_CATEGORY = "io"
 MANIPULATION_CATEGORY = "manipulation"
 NORMALIZATION = "normalization"
+BLUR_SIZE_OPT = ("INT", {"default": 90, "min": 1, "max": 255, "step": 1, })
+BLUR_SIZE_TWO_OPT = ("INT", {"default": 6, "min": 1, "max": 255, "step": 1, })
+COLOR_OPT = ("STRING", {
+                "default": "#000000",
+                "tooltip": "Color for fill.\n"
+                           "Can be an hexadecimal (#RRGGBB).\n"
+                           "Can comma separated RGB values in [0-255] or [0-1.0] range."})
 
 
 def tensor_to_pil(tensor: torch.Tensor) -> Image.Image:
@@ -387,3 +396,33 @@ class NormalizeToRangeMinus1to1():
         return (TF.normalize(image.permute(0, 3, 1, 2),  # BHWC -> BCHW
                              mean=[0.5, 0.5, 0.5],
                              std=[0.5, 0.5, 0.5]).permute(0, 2, 3, 1),)  # BCHW -> BHWC
+
+
+class ApplyMaskAFFCE:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+                "masks": ("MASK",),
+                "blur_size": BLUR_SIZE_OPT,
+                "blur_size_two": BLUR_SIZE_TWO_OPT,
+                "fill_color": ("BOOLEAN", {"default": False}),
+                "color": COLOR_OPT,
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "MASK",)
+    RETURN_NAMES = ("image", "mask",)
+    FUNCTION = "get_foreground"
+    CATEGORY = BASE_CATEGORY + "/" + MANIPULATION_CATEGORY
+    DESCRIPTION = ("Apply a mask to an image using\n"
+                   "Approximate Fast Foreground Colour Estimation.\n"
+                   "https://github.com/Photoroom/fast-foreground-estimation")
+    UNIQUE_NAME = "SET_ApplyMaskAFFCE"
+    DISPLAY_NAME = "Apply Mask using AFFCE"
+
+    def get_foreground(self, images, masks, blur_size=91, blur_size_two=7, fill_color=False, color=None):
+        out_images = apply_mask(logger, images, masks, model_management.get_torch_device(), blur_size, blur_size_two,
+                                fill_color, color)
+        return out_images.cpu(), masks.cpu()

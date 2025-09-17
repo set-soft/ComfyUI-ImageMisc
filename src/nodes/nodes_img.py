@@ -75,6 +75,10 @@ if has_load_image:
                          "tooltip": "If this image is present will be used instead of the downloaded one"
                     }),
                     "mask_bypass": ("MASK", {"tooltip": "If this mask is present will be used instead of the downloaded one"}),
+                    "local_name": ("STRING", {
+                        "default": "",
+                        "tooltip": "The name used locally. Leave empty to use `filename`"
+                    }),
                 }
             }
 
@@ -92,7 +96,7 @@ if has_load_image:
         OUTPUT_NODE = True
 
         def load_or_download_image(self, base_url: str, filename: str, image_bypass: Optional[torch.Tensor] = None,
-                                   mask_bypass: Optional[torch.Tensor] = None):
+                                   mask_bypass: Optional[torch.Tensor] = None, local_name: str = None):
             # If we have something at the bypass inputs use it
             if image_bypass is not None or mask_bypass is not None:
                 if image_bypass is None:
@@ -107,7 +111,8 @@ if has_load_image:
                 return (image_bypass, mask_bypass)
 
             save_dir = get_input_directory()
-            local_filepath = os.path.join(save_dir, filename)
+            dest_fname = local_name or filename
+            local_filepath = os.path.join(save_dir, dest_fname)
 
             if not os.path.exists(local_filepath):
                 logger.info(f"File '{filename}' not found locally. Attempting to download.")
@@ -117,7 +122,7 @@ if has_load_image:
                 download_url = base_url + filename
 
                 try:
-                    download_file(logger, url=download_url, save_dir=save_dir, file_name=filename, kind="image")
+                    download_file(logger, url=download_url, save_dir=save_dir, file_name=dest_fname, kind="image")
                 except Exception as e:
                     logger.error(f"Download failed for {download_url}: {e}", exc_info=True)
                     raise

@@ -144,6 +144,7 @@ Currently we just have a few nodes used by other nodes I maintain.
   - `blur_size_two` (`INT`): Diameter for the fine gaussian blur
   - `fill_color` (`BOOLEAN`): When enabled the removed image is replaced by a color, the output is an RGB image. Otherwise the removed part becomes transparent and the output is an RGBA image.
   - `color` (`STRING`): A string representing a color to be used when `fill_color` is enabled. Can be an hexadecimal RGB (i.e. `#AABBCC`) or comma separated RGB components. The components can be in the [0-255] or [0-1.0] range.
+  - `batched` (`BOOLEAN`): Process all the images at once. Otherwise do it one at a time.
 - **Output:**
   - `image` (`IMAGE`): The image after applying the mask.
   - `mask` (`MASK`): The input mask

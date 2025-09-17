@@ -412,8 +412,17 @@ class ApplyMaskAFFCE:
                 "masks": ("MASK",),
                 "blur_size": BLUR_SIZE_OPT,
                 "blur_size_two": BLUR_SIZE_TWO_OPT,
-                "fill_color": ("BOOLEAN", {"default": False}),
+                "fill_color": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": ("Fill the background using a color.\n"
+                                "Returns an RGB image, otherwise an RGBA.")
+                }),
                 "color": COLOR_OPT,
+                "batched":  ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": ("Process the images at once.\n"
+                                "Faster, needs more memory")
+                }),
             }
         }
 
@@ -427,7 +436,7 @@ class ApplyMaskAFFCE:
     UNIQUE_NAME = "SET_ApplyMaskAFFCE"
     DISPLAY_NAME = "Apply Mask using AFFCE"
 
-    def get_foreground(self, images, masks, blur_size=91, blur_size_two=7, fill_color=False, color=None):
+    def get_foreground(self, images, masks, blur_size=91, blur_size_two=7, fill_color=False, color=None, batched=True):
         out_images = apply_mask(logger, images, masks, model_management.get_torch_device(), blur_size, blur_size_two,
-                                fill_color, color)
+                                fill_color, color, batched)
         return out_images.cpu(), masks.cpu()

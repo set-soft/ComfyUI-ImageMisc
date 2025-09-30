@@ -24,6 +24,9 @@ Currently we just have a few nodes used by other nodes I maintain.
   - [Normalize Image to [-0.5, 0.5]](#5-normalize-image-to-05-05)
   - [Normalize Image to [-1, 1]](#6-normalize-image-to-1-1)
   - [Apply Mask using AFFCE](#7-apply-mask-using-affce)
+  - [Estimate foreground (AFFCE)](#8-estimate-foreground-affce)
+  - [Estimate foreground (FMLFE)](#9-estimate-foreground-fmlfe)
+  - [Create Empty Image](#10-create-empty-image)
 - &#x0001F4DD; [Usage Notes](#-usage-notes)
 - &#x0001F4DC; [Project History](#-project-history)
 - &#x2696;&#xFE0F; [License](#&#xFE0F;-license)
@@ -134,7 +137,7 @@ Currently we just have a few nodes used by other nodes I maintain.
 
 - **Display Name:** `Apply Mask using AFFCE`
 - **Internal Name:** `SET_ApplyMaskAFFCE`
-- **Category:** `image/manipulation
+- **Category:** `image/manipulation`
 - **Description:** Applies a mask to an image using [Approximate Fast Foreground Colour Estimation](https://github.com/Photoroom/fast-foreground-estimation). This blends the image contour in a better way.
 - **Purpose:** Used to apply the mask of a background removal model.
 - **Inputs:**
@@ -148,6 +151,62 @@ Currently we just have a few nodes used by other nodes I maintain.
 - **Output:**
   - `image` (`IMAGE`): The image after applying the mask.
   - `mask` (`MASK`): The input mask
+
+
+### 8. Estimate foreground (AFFCE)
+
+- **Display Name:** `Estimate foreground (AFFCE)`
+- **Internal Name:** `SET_AFFCE`
+- **Category:** `image/foreground`
+- **Description:** Estimates the foreground of an image using [Approximate Fast Foreground Colour Estimation](https://github.com/Photoroom/fast-foreground-estimation). The result is suitable for background replacement.
+- **Purpose:** Used to get a better foreground for background removal.
+- **Inputs:**
+  - `images` (`IMAGE`): One ore more ComfyUI images
+  - `masks` (`MASK`): Masks to apply
+  - `blur_size` (`INT`): Diameter for the coarse gaussian blur
+  - `blur_size_two` (`INT`): Diameter for the fine gaussian blur
+  - `batched` (`BOOLEAN`): Process all the images at once. Otherwise do it one at a time.
+- **Output:**
+  - `image` (`IMAGE`): The image after foreground estimation.
+  - `mask` (`MASK`): The input mask
+
+
+### 9. Estimate foreground (FMLFE)
+
+- **Display Name:** `Estimate foreground (FMLFE)`
+- **Internal Name:** `SET_FMLFE`
+- **Category:** `image/foreground`
+- **Description:** Estimates the foreground of an image using [Fast Multi-Level Foreground Estimation](https://arxiv.org/abs/2006.14970). The result is suitable for background replacement.
+- **Purpose:** Used to get a better foreground for background removal.
+- **Inputs:**
+  - `images` (`IMAGE`): The source image(s) from which to estimate the foreground and background.
+  - `masks` (`MASK`): The alpha matte that guides the estimation. White areas are treated as known foreground, black as known background, and gray areas are the semi-transparent regions the algorithm will solve for.
+  - `implementation" (`auto`, `cupy`, `opencl`, `numba`, `torch`): Which implementation to use. The `auto` will use the fastest available. The `torch` implementation is slow and approximated, but doesn't need extra dependencies. The `numba` implementation is good and just needs [Numba](https://numba.pydata.org/). The `cupy` implementation is the fastest, but needs [CuPy](https://cupy.dev/) and a full CUDA environment.
+  - `regularization` (`FLOAT`): The regularization strength (epsilon). This acts as a smoothness prior. Higher values result in smoother, more blended foreground and background colors, but may lose very fine details. Lower values preserve more detail but can be noisier.
+  - `n_small_iterations` (`INT`): The number of solver iterations to perform on the lower-resolution levels of the image pyramid. More iterations can improve quality at the cost of speed.
+  - `n_big_iterations` (`INT`): The number of solver iterations to perform on the higher-resolution (larger) levels of the image pyramid. Fewer iterations are typically needed at high resolution as the details are propagated up from the smaller levels.
+  - `small_size` (`INT`): The pixel dimension threshold. Image pyramid levels smaller than this size will use the higher 'n_small_iterations' count, while larger levels will use 'n_big_iterations'.
+  - `gradient_weight` (`FLOAT`): Controls how strongly the edges in the alpha matte influence color blending. A higher value makes the algorithm respect the mask's edges more, leading to sharper color boundaries. A lower value allows more color bleeding, an effect similar to increasing regularization.
+- **Output:**
+  - `image` (`IMAGE`): The estimated foreground image (F). This is a full-color image where the algorithm has estimated the true, un-blended color of the foreground object.
+  - `mask` (`MASK`): The estimated background image (B). The algorithm has effectively "inpainted" the area behind the foreground object, creating a clean background plate.
+
+
+### 10. Create Empty Image
+
+- **Display Name:** `Create Empty Image`
+- **Internal Name:** `SET_CreateEmptyImage`
+- **Category:** `image/generation`
+- **Description:** Creates an image filled with a solid color. Similar to standard `EmptyImage`, but you can use an image as reference and you have more options to select the color.
+- **Purpose:** Create an empty image
+- **Inputs:**
+  - `width` (`INT`): The width of the new image in pixels. This value is ignored if a `reference` is provided.
+  - `height` (`INT`): The height of the new image in pixels. This value is ignored if a `reference` is provided.
+  - `batch_size` (`INT`): The number of images to create in the batch. This value is ignored if a `reference` is provided.
+  - `color` (`STRING`): The solid color to fill the image with. Can be a named color (e.g., "black", "red"), a hex string (e.g., "#FF0000", "00ff00"), or comma-separated components in the [0, 255] or [0.0, 1.0] range.
+  - `reference` (`IMAGE`, optional): If an image is connected here, its dimensions (batch size, height, and width) will be used for the new image, overriding the manual width, height, and batch_size inputs.
+- **Output:**
+  - `image` (`IMAGE`): A new image tensor of the specified size and color.
 
 
 ## &#x0001F680; Installation

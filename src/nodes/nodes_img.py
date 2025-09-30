@@ -8,6 +8,9 @@ import numpy as np
 import os
 from PIL import Image  # Import the Python Imaging Library
 from seconohe.apply_mask import apply_mask
+from seconohe.foreground_estimation.affce import affce
+from seconohe.foreground_estimation.fmlfe import fmlfe, IMPL_PRIORITY
+from seconohe.color import color_to_rgb_float
 from seconohe.downloader import download_file
 # We are the main source, so we use the main_logger
 from . import main_logger
@@ -33,6 +36,7 @@ BASE_CATEGORY = "image"
 IO_CATEGORY = "io"
 MANIPULATION_CATEGORY = "manipulation"
 NORMALIZATION = "normalization"
+FOREGROUND = "foreground"
 BLUR_SIZE_OPT = ("INT", {"default": 90, "min": 1, "max": 255, "step": 1, })
 BLUR_SIZE_TWO_OPT = ("INT", {"default": 6, "min": 1, "max": 255, "step": 1, })
 COLOR_OPT = ("STRING", {
@@ -138,10 +142,10 @@ if has_load_image:
                 # by the ComfyUI widget, which is just the filename. It internally
                 # resolves the path using folder_paths.
 
-                logger.debug(f"Calling built-in LoadImage.load_image() with filename: '{filename}'")
+                logger.debug(f"Calling built-in LoadImage.load_image() with filename: '{dest_fname}'")
 
                 # Call the method and return its result directly
-                result = loader_instance.load_image(filename)
+                result = loader_instance.load_image(dest_fname)
                 # This information is for the preview, as we are an output node and we return images
                 # they will be displayed in our node. Quite simple.
                 downloaded_file = {
@@ -440,3 +444,222 @@ class ApplyMaskAFFCE:
         out_images = apply_mask(logger, images, masks, model_management.get_torch_device(), blur_size, blur_size_two,
                                 fill_color, color, batched)
         return out_images.cpu(), masks.cpu()
+
+
+class AFFCE:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+                "masks": ("MASK",),
+                "blur_size": BLUR_SIZE_OPT,
+                "blur_size_two": BLUR_SIZE_TWO_OPT,
+                "batched":  ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": ("Process the images at once.\n"
+                                "Faster, needs more memory")
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "MASK",)
+    RETURN_NAMES = ("foreground", "mask",)
+    FUNCTION = "get_foreground"
+    CATEGORY = BASE_CATEGORY + "/" + FOREGROUND
+    DESCRIPTION = ("Estimate the foreground image using\n"
+                   "Approximate Fast Foreground Colour Estimation.\n"
+                   "https://github.com/Photoroom/fast-foreground-estimation")
+    UNIQUE_NAME = "SET_AFFCE"
+    DISPLAY_NAME = "Estimate foreground (AFFCE)"
+
+    def get_foreground(self, images, masks, blur_size=91, blur_size_two=7, batched=True):
+        device = model_management.get_torch_device()
+        images_on_device = images.to(device)
+        masks_on_device = masks.to(device)
+
+        out_images = affce(images_on_device, masks_on_device, r1=blur_size, r2=blur_size_two, batched=batched)
+
+        return out_images.cpu(), masks.cpu()
+
+
+class FMLFE:
+    """
+    A ComfyUI node that uses the Fast Multi-Level Foreground Estimation algorithm
+    to produce a high-quality foreground and background separation. It can
+    intelligently select the best available backend (CuPy, OpenCL, Numba, or PyTorch).
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        # Create the dropdown list for the implementation choice
+        impl_list = ['auto'] + IMPL_PRIORITY
+
+        return {
+            "required": {
+                "images": ("IMAGE", {
+                    "tooltip": "The source image(s) from which to estimate the foreground and background."
+                }),
+                "masks": ("MASK", {
+                    "tooltip": "The alpha matte that guides the estimation. White areas are treated as known "
+                               "foreground, black as known background, and gray areas are the semi-transparent "
+                               "regions the algorithm will solve for."
+                }),
+                "implementation": (impl_list, {
+                    "default": "auto",
+                    "tootip": "Select the computation backend. 'auto' mode will automatically try to use the "
+                              "fastest available implementation, in order of priority: CuPy (NVIDIA GPU), "
+                              "OpenCL (GPU), Numba (CPU/GPU), and finally the pure PyTorch version."
+                }),
+            },
+            "optional": {
+                "regularization": ("FLOAT", {
+                    "default": 1e-5,
+                    "min": 0.0,
+                    "max": 0.1,
+                    "step": 1e-5,
+                    "display": "number",
+                    "tooltip": "The regularization strength (epsilon). This acts as a smoothness prior. "
+                               "Higher values result in smoother, more blended foreground and background colors, "
+                               "but may lose very fine details. Lower values preserve more detail but can be noisier."
+                }),
+                "n_small_iterations": ("INT", {
+                    "default": 10,
+                    "min": 1,
+                    "max": 100,
+                    "tooltip": "The number of solver iterations to perform on the lower-resolution levels of the "
+                               "image pyramid. More iterations can improve quality at the cost of speed."
+                }),
+                "n_big_iterations": ("INT", {
+                    "default": 2,
+                    "min": 1,
+                    "max": 100,
+                    "tooltip": "The number of solver iterations to perform on the higher-resolution (larger) levels "
+                               "of the image pyramid. Fewer iterations are typically needed at high resolution as the "
+                               "details are propagated up from the smaller levels."
+                }),
+                "small_size": ("INT", {
+                    "default": 32,
+                    "min": 8,
+                    "max": 256,
+                    "tooltip": "The pixel dimension threshold. Image pyramid levels smaller than this size will use "
+                               "the higher 'n_small_iterations' count, while larger levels will use 'n_big_iterations'."
+                }),
+                "gradient_weight": ("FLOAT", {
+                    "default": 1.0,
+                    "min": 0.0,
+                    "max": 10.0,
+                    "step": 0.1,
+                    "tooltip": "Controls how strongly the edges in the alpha matte influence color blending. "
+                               "A higher value makes the algorithm respect the mask's edges more, leading to sharper "
+                               "color boundaries. A lower value allows more color bleeding, an effect similar to "
+                               "increasing regularization."
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "IMAGE", "MASK",)
+    RETURN_NAMES = ("foreground", "background", "mask")
+    FUNCTION = "estimate"
+    CATEGORY = BASE_CATEGORY + "/" + FOREGROUND
+    DESCRIPTION = ("Estimate the foreground image using\n"
+                   "Fast Multi-Level Foreground Estimation.")
+    UNIQUE_NAME = "SET_FMLFE"
+    DISPLAY_NAME = "Estimate foreground (FMLFE)"
+
+    def estimate(self, images: torch.Tensor, masks: torch.Tensor, implementation: str,
+                 regularization: float, n_small_iterations: int, n_big_iterations: int,
+                 small_size: int, gradient_weight: float):
+        try:
+            foregrounds, backgrounds = fmlfe(
+                images=images,
+                masks=masks,
+                logger=logger,
+                implementation=implementation,
+                regularization=regularization,
+                n_small_iterations=n_small_iterations,
+                n_big_iterations=n_big_iterations,
+                small_size=small_size,
+                gradient_weight=gradient_weight
+            )
+
+            return (foregrounds, backgrounds, masks,)
+
+        except Exception as e:
+            # This ensures that if all backends fail, the error is clearly visible in the ComfyUI console.
+            logger.error("Failed to execute ML Foreground Estimation. All backends failed.")
+            logger.error(f"Last error: {e}")
+            # Raising the exception will stop the workflow and show the error to the user.
+            raise e
+
+
+class CreateEmptyImage:
+    """
+    A ComfyUI node to create a solid-color image tensor.
+    The output dimensions can be specified manually or inherited from an optional input image.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "width": ("INT", {
+                    "default": 1024,
+                    "min": 1,
+                    "max": 8192,
+                    "step": 8,
+                    "tooltip": "The width of the new image in pixels. This value is ignored if a `reference` is provided."
+                }),
+                "height": ("INT", {
+                    "default": 1024,
+                    "min": 1,
+                    "max": 8192,
+                    "step": 8,
+                    "tooltip": "The height of the new image in pixels. This value is ignored if a `reference` is provided."
+                }),
+                "batch_size": ("INT", {
+                    "default": 1,
+                    "min": 1,
+                    "max": 64,
+                    "tooltip": "The number of images to create in the batch. This value is ignored if a `reference` "
+                               "is provided."
+                }),
+                "color": COLOR_OPT,
+            },
+            "optional": {
+                "reference": ("IMAGE", {
+                    "tooltip": "If an image is connected here, its dimensions (batch size, height, and width) will be "
+                               "used for the new image, overriding the manual width, height, and batch_size inputs."
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("image",)
+    FUNCTION = "create_image"
+    CATEGORY = BASE_CATEGORY + "/generation"
+    DESCRIPTION = ("Create a solid-color image.\n"
+                   "If the optional image is provides uses its shape.")
+    UNIQUE_NAME = "SET_CreateEmptyImage"
+    DISPLAY_NAME = "Create Empty Image"
+
+    def create_image(self, width: int, height: int, batch_size: int, color: str,
+                     reference: Optional[torch.Tensor] = None):
+        # --- 1. Determine the final shape of the output tensor ---
+        if reference is not None:
+            # If an image is provided, its shape overrides the manual inputs
+            b, h, w, _ = reference.shape
+        else:
+            b, h, w = batch_size, height, width
+
+        # --- 2. Parse the color string ---
+        # The function returns a tuple of floats in the [0, 1] range
+        rgb_color = color_to_rgb_float(logger, color)
+
+        # --- 3. Create the tensor efficiently ---
+        # Create a small color tensor and then expand it to the final size.
+        # This is highly memory-efficient as it creates a view, not a full-size copy.
+        # Tensors should be created on the CPU by default in generator nodes.
+        color_tensor = torch.tensor(rgb_color, dtype=torch.float32, device="cpu").view(1, 1, 1, 3)
+        final_image = color_tensor.expand(b, h, w, 3)
+
+        return (final_image,)

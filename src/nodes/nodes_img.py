@@ -150,7 +150,7 @@ if has_load_image:
                 # they will be displayed in our node. Quite simple.
                 downloaded_file = {
                      "images": [{
-                         "filename": filename,
+                         "filename": dest_fname,
                          "subfolder": "",
                          "type": "input"  # We stored the file in the "input" folder
                      }]

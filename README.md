@@ -253,6 +253,15 @@ Once installed the examples are available in the ComfyUI workflow templates, in 
 
 - 1.0.0 2025-07-21: Initial release
   - Just the download image.
+- 1.1.0 2025-07-25: Adapted to use SeCoNoHe
+- 1.1.1 2025-07-25: Just small details for ComfyUI registry
+- 1.2.0 2025-10-05:
+  - Face composite nodes
+  - Normalization nodes
+  - Apply mask nodes, including support for:
+    - "Fast Multi-Level Foreground Estimation" (from [PyMatting](https://github.com/pymatting/pymatting))
+    - "Approximate Fast Foreground Colour Estimation" (from [Photoroom](https://github.com/Photoroom/fast-foreground-estimation))
+  - Create empty image node, with reference image
 
 
 ## &#x2696;&#xFE0F; License

@@ -4,6 +4,6 @@
 # Project: ComfyUI-ImageMisc
 from seconohe.logger import initialize_logger
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 NODES_NAME = "ImageMisc"
 main_logger = initialize_logger(NODES_NAME)

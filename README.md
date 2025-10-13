@@ -45,6 +45,7 @@ Currently we just have a few nodes used by other nodes I maintain.
      - `base_url` (STRING): The URL of the directory containing the image file.
      - `filename` (STRING): The name of the image file to download (e.g., photo.jpg, art.png).
      - `local_name` (STRING, optional): The name used locally. Leave blank to use `filename`.
+     - `embed_transparency` (BOOLEAN, optional): Create RGBA images when they have transparency. Not all nodes supports them.
    - **Output:**
      - `image` (IMAGE): The loaded image.
      - `alpha_mask` (MASK): The alpha mask for the loaded image.

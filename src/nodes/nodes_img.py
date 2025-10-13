@@ -122,6 +122,10 @@ if has_load_image:
                         "default": "",
                         "tooltip": "The name used locally. Leave empty to use `filename`"
                     }),
+                    "embed_transparency": ("BOOLEAN", {
+                        "default": False,
+                        "tooltip": "Create RGBA images when they have transparency."
+                    }),
                 }
             }
 
@@ -139,7 +143,8 @@ if has_load_image:
         OUTPUT_NODE = True
 
         def load_or_download_image(self, base_url: str, filename: str, image_bypass: Optional[torch.Tensor] = None,
-                                   mask_bypass: Optional[torch.Tensor] = None, local_name: str = None):
+                                   mask_bypass: Optional[torch.Tensor] = None, local_name: str = None,
+                                   embed_transparency: bool = False):
             # If we have something at the bypass inputs use it
             if image_bypass is not None or mask_bypass is not None:
                 if image_bypass is None:
@@ -185,6 +190,14 @@ if has_load_image:
 
                 # Call the method and return its result directly
                 result = loader_instance.load_image(dest_fname)
+                # Create an RGBA image if needed
+                if embed_transparency:
+                    image, mask = result
+                    # Expand the mask to (b, h, w, 1)
+                    mask = mask[..., None]
+                    # Concatenate image and mask into (b, h, w, 4)
+                    image_with_alpha = torch.cat([image, 1.0 - mask], dim=-1)
+                    result = (image_with_alpha, mask)
                 # This information is for the preview, as we are an output node and we return images
                 # they will be displayed in our node. Quite simple.
                 downloaded_file = {

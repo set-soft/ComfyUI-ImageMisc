@@ -78,6 +78,14 @@ SIZE_OPT = ("INT", {"default": 512, "min": 0, "max": MAX_RESOLUTION, "step": 1})
 SIZE_OPT_FI = deepcopy(SIZE_OPT)
 SIZE_OPT_FI[1]["forceInput"] = True
 SIZE_OPT[1]["tooltip"] = "Used when no `get_image_size` is provided"
+PAD_TRANS = ("FLOAT", {
+                "default": 1.0,
+                "min": 0.0,
+                "max": 1.0,
+                "step": 0.1,
+                "display": "number",
+                "tooltip": ("The transparency for the padded area for all modes except `edge_pixel`."
+                            "1.0 is fully transparent, 0.0 is fully opaque.")})
 
 
 def tensor_to_pil(tensor: torch.Tensor) -> Image.Image:
@@ -736,6 +744,7 @@ class ImagePad:
                 "mask": ("MASK", ),
                 "target_width": SIZE_OPT_FI,
                 "target_height": SIZE_OPT_FI,
+                "pad_transparency": PAD_TRANS,
             }
         }
 
@@ -748,7 +757,7 @@ class ImagePad:
     DISPLAY_NAME = "Pad Image (KJ/SET)"
 
     def pad(self, image, left, right, top, bottom, extra_padding, color, pad_mode, mask=None, target_width=None,
-            target_height=None):
+            target_height=None, pad_transparency=1.0):
         B, H, W, C = image.shape
 
         # Resize masks to image dimensions if necessary
@@ -760,7 +769,7 @@ class ImagePad:
         # Parse background color
         color_tuple = color_to_rgb_float(logger, color)
         if C == 4 and len(color_tuple) == 3:
-            color_tuple += (0.0,)  # Use transparent color to pad RGBA images
+            color_tuple += (1.0 - pad_transparency,)  # Use transparent color to pad RGBA images. 0 is transparent for RGBA
         bg_color = torch.tensor(color_tuple, dtype=image.dtype, device=image.device)
 
         # Calculate padding sizes with extra padding
@@ -881,15 +890,17 @@ class ImagePad:
                 out_image[b, :, :, :] = bg_color.unsqueeze(0).unsqueeze(0)
                 out_image[b, pad_top:pad_top+H, pad_left:pad_left+W, :] = image[b]
 
+        # Note: in the mask 1 is transparent and 0 opaque (reverse of RGBA)
         if mask is not None:
             out_masks = torch.nn.functional.pad(
                 mask,
                 (pad_left, pad_right, pad_top, pad_bottom),
                 mode='replicate' if pad_mode == "edge_pixel" else 'constant',
-                value=None if pad_mode == "edge_pixel" else 1.0,
+                value=None if pad_mode == "edge_pixel" else pad_transparency,
             )
         else:
-            out_masks = torch.ones((B, padded_height, padded_width), dtype=image.dtype, device=image.device)
+            out_masks = torch.full((B, padded_height, padded_width), pad_transparency, dtype=image.dtype,
+                                   device=image.device)
             for m in range(B):
                 out_masks[m, pad_top:pad_top+H, pad_left:pad_left+W] = 0.0
 
@@ -933,6 +944,7 @@ class ImageResize:
                 "per_batch": ("INT", {
                     "default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1,
                     "tooltip": "Process images in sub-batches to reduce memory usage. 0 disables sub-batching."}),
+                "pad_transparency": PAD_TRANS,
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -951,7 +963,7 @@ class ImageResize:
     DISPLAY_NAME = "Resize Image (KJ/SET)"
 
     def resize(self, image, width, height, keep_proportion, upscale_method, divisible_by, pad_color, crop_position,
-               unique_id, device="cpu", mask=None, get_image_size=None, per_batch=0):
+               unique_id, device="cpu", mask=None, get_image_size=None, per_batch=0, pad_transparency=1.0):
         B, H, W, C = image.shape
 
         if device == "gpu":
@@ -1109,7 +1121,7 @@ class ImageResize:
                     "color"
                 )
                 out_image, out_mask = ImagePad.pad(self, out_image, pad_left, pad_right, pad_top, pad_bottom, 0, pad_color,
-                                                   pad_mode, mask=out_mask)
+                                                   pad_mode, mask=out_mask, pad_transparency=pad_transparency)
 
             return out_image, out_mask
 

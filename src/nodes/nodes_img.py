@@ -872,7 +872,8 @@ class ImagePad:
             out_masks = torch.nn.functional.pad(
                 mask,
                 (pad_left, pad_right, pad_top, pad_bottom),
-                mode='replicate'
+                mode='replicate' if pad_mode == "edge_pixel" else 'constant',
+                value=None if pad_mode == "edge_pixel" else 1.0,
             )
         else:
             out_masks = torch.ones((B, padded_height, padded_width), dtype=image.dtype, device=image.device)

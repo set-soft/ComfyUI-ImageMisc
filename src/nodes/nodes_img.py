@@ -886,7 +886,7 @@ class ImagePad:
 # Differences:
 # - The color is an string that support various formats
 # - We can copy the size of a reference image (found in V1, not in V2)
-# - Fixed: input image size is copied only when both width and height are 0, allowing for one to be 0 in resize
+# - Removed misleading code to compute padded size when width and/or height was missing
 class ImageResize:
     """
     A resize and crop node, from ImageResizeKJv2

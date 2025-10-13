@@ -949,9 +949,11 @@ class ImageResize:
             width = get_image_size.shape[2]
             height = get_image_size.shape[1]
 
-        # Both 0 is used to copy input size
-        if width == 0 and height == 0:
-            width, height = W, H
+        # Copy the size that is 0
+        if width == 0:
+            width = W
+        if height == 0:
+            height = H
 
         pillarbox_blur = keep_proportion == "pillarbox_blur"
 
@@ -961,21 +963,9 @@ class ImageResize:
         # Solve the size for the ones that keeps aspect: resize, pad and pad_edge
         if keep_proportion == "resize" or keep_proportion.startswith("pad") or pillarbox_blur:
             # If one of the dimensions is zero, calculate it to maintain the aspect ratio
-            if width == 0 and height != 0:
-                ratio = height / H
-                new_width = round(W * ratio)
-                new_height = height
-            elif height == 0 and width != 0:
-                ratio = width / W
-                new_width = width
-                new_height = round(H * ratio)
-            elif width != 0 and height != 0:
-                ratio = min(width / W, height / H)
-                new_width = round(W * ratio)
-                new_height = round(H * ratio)
-            else:
-                new_width = width
-                new_height = height
+            ratio = min(width / W, height / H)
+            new_width = round(W * ratio)
+            new_height = round(H * ratio)
 
             if keep_proportion.startswith("pad") or pillarbox_blur:
                 # Calculate padding based on position

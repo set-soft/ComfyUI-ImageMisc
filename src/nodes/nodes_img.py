@@ -745,7 +745,10 @@ class ImagePad:
                 mask = F.interpolate(mask.unsqueeze(1), size=(H, W), mode=MASK_UPSCALE).squeeze(1)
 
         # Parse background color
-        bg_color = torch.tensor(color_to_rgb_float(logger, color), dtype=image.dtype, device=image.device)
+        color_tuple = color_to_rgb_float(logger, color)
+        if C == 4 and len(color_tuple) == 3:
+            color_tuple += (0.0,)  # Use transparent color to pad RGBA images
+        bg_color = torch.tensor(color_tuple, dtype=image.dtype, device=image.device)
 
         # Calculate padding sizes with extra padding
         if target_width is not None and target_height is not None:

@@ -14,9 +14,8 @@ from PIL import Image  # Import the Python Imaging Library
 from seconohe.apply_mask import apply_mask
 from seconohe.foreground_estimation.affce import affce
 from seconohe.foreground_estimation.fmlfe import fmlfe, IMPL_PRIORITY
-from seconohe.color import color_to_rgb_float
 from seconohe.downloader import download_file
-from seconohe.color import color_to_rgb_uint8
+from seconohe.color import color_to_rgb_float
 # We are the main source, so we use the main_logger
 from . import main_logger
 import torch
@@ -746,7 +745,7 @@ class ImagePad:
                 mask = F.interpolate(mask.unsqueeze(1), size=(H, W), mode=MASK_UPSCALE).squeeze(1)
 
         # Parse background color
-        bg_color = torch.tensor(color_to_rgb_uint8(logger, color), dtype=image.dtype, device=image.device)
+        bg_color = torch.tensor(color_to_rgb_float(logger, color), dtype=image.dtype, device=image.device)
 
         # Calculate padding sizes with extra padding
         if target_width is not None and target_height is not None:

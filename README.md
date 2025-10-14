@@ -108,6 +108,7 @@ Shows the most common uses of the resize and padding nodes. You can see how vari
     - "Fast Multi-Level Foreground Estimation" (from [PyMatting](https://github.com/pymatting/pymatting))
     - "Approximate Fast Foreground Colour Estimation" (from [Photoroom](https://github.com/Photoroom/fast-foreground-estimation))
   - Create empty image node, from reference image
+- 1.3.0 2025-10-14: Pad Image, Resize Image and Resize Mask nodes
 
 
 ## &#x2696;&#xFE0F; License

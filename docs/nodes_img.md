@@ -37,7 +37,7 @@
      - The animated frame is automatically resized to fit the bounding box dimensions before pasting. The pasting logic safely handles cases where the bbox is partially outside the image boundaries.
 
 # 3. Face Composite (frame by frame)
-   - **Display Name:** `"Face Composite (frame by frame)`
+   - **Display Name:** `Face Composite (frame by frame)`
    - **Internal Name:** `SET_CompositeFaceFrameByFrame`
    - **Category:** `image/manipulation`
    - **Description:** This node is a simplified variant for **1-to-1** compositing. It is perfect for video processing workflows where you need to paste a sequence of processed frames back into the original video sequence at a static location.
@@ -55,7 +55,7 @@
 
 
 # 4. Normalize Image to ImageNet
-   - **Display Name:** `"Normalize Image to ImageNet`
+   - **Display Name:** `Normalize Image to ImageNet`
    - **Internal Name:** `SET_NormalizeToImageNetDataset`
    - **Category:** `image/normalization`
    - **Description:** Normalizes an image tensor using the mean and standard deviation of the ImageNet dataset.
@@ -255,3 +255,34 @@
   - `mask` (`MASK`): The resized mask tensor.
   - `width` (`INT`): The final width of the output mask.
   - `height` (`INT`): The final height of the output mask.
+
+
+# 14. Arbitrary Normalize
+   - **Display Name:** `Arbitrary Normalize`
+   - **Internal Name:** `SET_NormalizeArbitrary`
+   - **Category:** `image/normalization`
+   - **Description:** Normalizes an image tensor using the mean and standard deviation provided in the `parameters` input.
+   - **Purpose:** Essential for pre-processing images before feeding them into models
+   - **Inputs:**
+     - `image` (`IMAGE`): A standard ComfyUI image tensor in the `[0, 1]` range.
+     - `parameters` (`NORM_PARAMS`): The parameters for the normalization. This is a dict with two keys, `mean` and `std`, which are lists with the R, G, B parameters.
+   - **Output:**
+     - `image` (`IMAGE`): The normalized image tensor. The value range will be altered significantly.
+   - **How it Works:**  For each channel, it performs the operation `output = (input - mean) / std`, using the values from NORM_PARAMS
+
+
+# 15. Normalize Parameters
+   - **Display Name:** `Normalize Parameters`
+   - **Internal Name:** `SET_NormalizeParameters`
+   - **Category:** `image/normalization`
+   - **Description:** Provides the `NORM_PARAMS` for the [Arbitrary Normalize](#14-arbitrary-normalize) node
+   - **Purpose:** This is a user interface to the [Arbitrary Normalize](#14-arbitrary-normalize) node
+   - **Inputs:**
+     - `mean_red` (`FLOAT`): Mean value for the red channel
+     - `mean_green` (`FLOAT`): Mean value for the green channel
+     - `mean_blue` (`FLOAT`): Mean value for the blue channel
+     - `std_red` (`FLOAT`): Standard deviation for the red channel
+     - `std_green` (`FLOAT`): Standard deviation for the green channel
+     - `std_blue` (`FLOAT`): Standard deviation for the blue channel
+   - **Output:**
+     - `parameters` (`NORM_PARAMS`): The parameters for the normalization. This is a dict with two keys, `mean` and `std`, which are lists with the R, G, B parameters.

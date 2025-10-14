@@ -89,6 +89,12 @@ PAD_TRANS = ("FLOAT", {
                 "display": "number",
                 "tooltip": ("The transparency for the padded area for all modes except `edge_pixel`."
                             "1.0 is fully transparent, 0.0 is fully opaque.")})
+NORM_PARAM = ("FLOAT", {
+                "default": 1.0,
+                "min": 0.0,
+                "max": 1.0,
+                "step": 0.1,
+                "display": "number"})
 
 
 def tensor_to_pil(tensor: torch.Tensor) -> Image.Image:
@@ -418,7 +424,6 @@ class NormalizeToImageNetDataset():
     DESCRIPTION = ("Normalize the image to the ImageNet dataset")
     UNIQUE_NAME = "SET_NormalizeToImageNetDataset"
     DISPLAY_NAME = "Normalize Image to ImageNet"
-    imagenet_normalize = None
 
     def normalize(self, image: torch.Tensor):
         return (TF.normalize(image.permute(0, 3, 1, 2),  # BHWC -> BCHW
@@ -440,7 +445,6 @@ class NormalizeToRangeMinus05to05():
     DESCRIPTION = ("Normalize the image to [-0.5, 0.5]")
     UNIQUE_NAME = "SET_NormalizeToRangeMinus05to05"
     DISPLAY_NAME = "Normalize Image to [-0.5, 0.5]"
-    imagenet_normalize = None
 
     def normalize(self, image: torch.Tensor):
         return (TF.normalize(image.permute(0, 3, 1, 2),  # BHWC -> BCHW
@@ -462,12 +466,62 @@ class NormalizeToRangeMinus1to1():
     DESCRIPTION = ("Normalize the image to [-1, 1]")
     UNIQUE_NAME = "SET_NormalizeToRangeMinus1to1"
     DISPLAY_NAME = "Normalize Image to [-1, 1] (i.e. GAN)"
-    imagenet_normalize = None
 
     def normalize(self, image: torch.Tensor):
         return (TF.normalize(image.permute(0, 3, 1, 2),  # BHWC -> BCHW
                              mean=[0.5, 0.5, 0.5],
                              std=[0.5, 0.5, 0.5]).permute(0, 2, 3, 1),)  # BCHW -> BHWC
+
+
+class NormalizeArbitrary():
+    """
+    A ComfyUI node to normalize the values to arbitrary mean/std
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "parameters": ("NORM_PARAMS",),
+            },
+        }
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("image",)
+    FUNCTION = "normalize"
+    CATEGORY = BASE_CATEGORY + "/" + NORMALIZATION
+    DESCRIPTION = ("Normalize the image to the provided parameters")
+    UNIQUE_NAME = "SET_NormalizeArbitrary"
+    DISPLAY_NAME = "Arbitrary Normalize"
+
+    def normalize(self, image: torch.Tensor, parameters):
+        return (TF.normalize(image.movedim(-1, 1),  # BHWC -> BCHW
+                             mean=parameters["mean"],
+                             std=parameters["std"]).movedim(1, -1),)  # BCHW -> BHWC
+
+
+class NormalizeParameters():
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "mean_red": NORM_PARAM,
+                "mean_green": NORM_PARAM,
+                "mean_blue": NORM_PARAM,
+                "std_red": NORM_PARAM,
+                "std_green": NORM_PARAM,
+                "std_blue": NORM_PARAM,
+            },
+        }
+    RETURN_TYPES = ("NORM_PARAMS",)
+    RETURN_NAMES = ("parameters",)
+    FUNCTION = "normalize"
+    CATEGORY = BASE_CATEGORY + "/" + NORMALIZATION
+    DESCRIPTION = ("Parameters for the arbitrary normalization")
+    UNIQUE_NAME = "SET_NormalizeParameters"
+    DISPLAY_NAME = "Normalize Parameters"
+
+    def normalize(self, mean_red, mean_green, mean_blue, std_red, std_green, std_blue):
+        return ({"mean": [mean_red, mean_green, mean_blue], "std": [std_red, std_green, std_blue]},)
 
 
 class ApplyMaskAFFCE:

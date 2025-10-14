@@ -35,6 +35,8 @@ Currently we just have a few nodes used by other nodes I maintain.
     - [Normalize Image to ImageNet](docs/nodes_img.md#4-normalize-image-to-imagenet)
     - [Normalize Image to [-0.5, 0.5]](docs/nodes_img.md#5-normalize-image-to-05-05)
     - [Normalize Image to [-1, 1]](docs/nodes_img.md#6-normalize-image-to-1-1)
+    - [Arbitrary Normalize](docs/nodes_img.md#14-arbitrary-normalize)
+    - [Normalize Parameters](docs/nodes_img.md#15-normalize-parameters)
 - &#x0001F4DD; [Usage Notes](#-usage-notes)
 - &#x0001F4DC; [Project History](#-project-history)
 - &#x2696;&#xFE0F; [License](#&#xFE0F;-license)

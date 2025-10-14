@@ -77,6 +77,9 @@ PAD_SIZE_OPT = ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1
 SIZE_OPT = ("INT", {"default": 512, "min": 0, "max": MAX_RESOLUTION, "step": 1})
 SIZE_OPT_FI = deepcopy(SIZE_OPT)
 SIZE_OPT_FI[1]["forceInput"] = True
+SIZE_OPT_FI[1]["tooltip"] = ("Connect both `target` inputs\n"
+                             "If 0 the size of the image is used\n"
+                             "Overrides left/right/top/bottom")
 SIZE_OPT[1]["tooltip"] = "Used when no `get_image_size` is provided"
 PAD_TRANS = ("FLOAT", {
                 "default": 1.0,
@@ -726,6 +729,9 @@ class CreateEmptyImage:
 
 
 # Adapted from KJNodes, credits to Kijai
+# - When target_width/target_height are 0 we use the image size
+# - Added control over the transparency of the padded area (pad_transparency)
+# - Handle RGBA images
 class ImagePad:
     @classmethod
     def INPUT_TYPES(s):
@@ -752,7 +758,8 @@ class ImagePad:
     RETURN_NAMES = ("images", "masks",)
     FUNCTION = "pad"
     CATEGORY = BASE_CATEGORY + "/" + MANIPULATION_CATEGORY
-    DESCRIPTION = "Pad the input image and optionally mask with the specified padding."
+    DESCRIPTION = ("Pad the input image and optionally mask with the specified padding.\n"
+                   "The `target_width`/`target_height` overrides left, right, top and bottom.")
     UNIQUE_NAME = "SET_ImagePad"
     DISPLAY_NAME = "Pad Image (KJ/SET)"
 
@@ -774,6 +781,12 @@ class ImagePad:
 
         # Calculate padding sizes with extra padding
         if target_width is not None and target_height is not None:
+            # SET: If any of them is 0 use the current value
+            if target_width == 0:
+                target_width = W
+            if target_height == 0:
+                target_height = H
+
             if extra_padding > 0:
                 image = upscale(image.movedim(-1, 1), W - extra_padding, H - extra_padding, BEST_UPSCALE).movedim(1, -1)
                 B, H, W, C = image.shape
@@ -912,6 +925,7 @@ class ImagePad:
 # - The color is an string that support various formats
 # - We can copy the size of a reference image (found in V1, not in V2)
 # - Removed misleading code to compute padded size when width and/or height was missing
+# - Added control over the transparency of the padded area
 class ImageResize:
     """
     A resize and crop node, from ImageResizeKJv2

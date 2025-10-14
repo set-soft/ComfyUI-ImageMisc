@@ -193,11 +193,11 @@
     - `edge_pixel`: Repeats the outermost line of pixels.
     - `color`: Fills with the specified solid `color`.
     - `pillarbox_blur`: Fills with a blurred, desaturated, and dimmed version of the original image, scaled to fit the new dimensions.
-  - `color` (`STRING`): The solid color to use when `pad_mode` is "color". Accepts hex codes, color names, and RGB values.
+  - `color` (`STRING`): The solid color to use when `pad_mode` is "color". Accepts hex codes, color names, and RGB values. This is more flexible than in KJNodes.
   - `mask` (`MASK`, optional): An optional mask to be padded along with the image.
-  - `target_width` (`INT`, optional): If provided with `target_height`, pads the image to this exact width, centering the original content. This overrides the `left` and `right` inputs.
-  - `target_height` (`INT`, optional): If provided with `target_width`, pads the image to this exact height, centering the original content. This overrides the `top` and `bottom` inputs.
-  - `pad_transparency` (`FLOAT`, optional): Controls the opacity of the padded area in the output mask. 1.0 is fully transparent (no mask), and 0.0 is fully opaque (masked).
+  - `target_width` (`INT`, optional): If provided with `target_height`, pads the image to this exact width, centering the original content. This overrides the `left` and `right` inputs. If you set it to 0 the width of the image is used. Note that you must also connect `target_height`.
+  - `target_height` (`INT`, optional): If provided with `target_width`, pads the image to this exact height, centering the original content. This overrides the `top` and `bottom` inputs. If you set it to 0 the heigth of the image is used. Note that you must also connect `target_width`.
+  - `pad_transparency` (`FLOAT`, optional): Controls the opacity of the padded area in the output mask. 1.0 is fully transparent (no mask), and 0.0 is fully opaque (masked). Not in KJNodes.
 - **Outputs:**
   - `images` (`IMAGE`): The padded image tensor.
   - `masks` (`MASK`): The padded mask tensor.
@@ -221,14 +221,14 @@
     - `pad`, `pad_edge`, `pad_edge_pixel`: Resizes the image to fit within the target dimensions while maintaining aspect ratio, then pads the remaining space to meet the exact target dimensions.
     - `crop`: Resizes and crops the image to match the target aspect ratio and size.
     - `pillarbox_blur`: Resizes the image to fit and fills the remaining space with a blurred background.
-  - `pad_color` (`STRING`): The solid color to use for padding when `keep_proportion` is set to `pad`.
+  - `pad_color` (`STRING`): The solid color to use for padding when `keep_proportion` is set to `pad`. Accepts hex codes, color names, and RGB values. This is more flexible than in KJNodes.
   - `crop_position` (`STRING`): The anchor point (`center`, `top`, `left`, etc.) for `crop` and `pad` operations.
   - `divisible_by` (`INT`): Ensures the final width and height are multiples of this number, which is often required for models like VAEs.
   - `mask` (`MASK`, optional): An optional mask to be transformed along with the image.
   - `device` (`STRING`, optional): The computation device (`cpu` or `gpu`) to use for the operation. Note that `lanczos` is not supported on the GPU.
-  - `get_image_size` (`IMAGE`, optional): If an image is connected, its dimensions will be used as the target width and height, overriding the manual inputs.
+  - `get_image_size` (`IMAGE`, optional): If an image is connected, its dimensions will be used as the target width and height, overriding the manual inputs. Not in KJNodes.
   - `per_batch` (`INT`, optional): If greater than 0, processes the input batch in smaller sub-batches of this size to reduce memory usage.
-  - `pad_transparency` (`FLOAT`, optional): Controls the opacity of the padded area in the output mask.
+  - `pad_transparency` (`FLOAT`, optional): Controls the opacity of the padded area in the output mask. Not in KJNodes.
 - **Outputs:**
   - `IMAGE` (`IMAGE`): The transformed image.
   - `width` (`INT`): The final width of the output image.

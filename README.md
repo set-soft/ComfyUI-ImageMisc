@@ -75,16 +75,16 @@ Once installed the examples are available in the ComfyUI workflow templates, in 
 
 ### [image_download.json](https://raw.githubusercontent.com/set-soft/ComfyUI-ImageMisc/refs/heads/main/example_workflows/image_download.json)
 
-[![image_download.json](example_workflows/image_download.jpg)](https://raw.githubusercontent.com/set-soft/ComfyUI-ImageMisc/refs/heads/main/example_workflows/image_download.json)
-
 Shows how to use the image downloader node.
+
+[![image_download.json](example_workflows/image_download.jpg)](https://raw.githubusercontent.com/set-soft/ComfyUI-ImageMisc/refs/heads/main/example_workflows/image_download.json)
 
 
 ### [resize.json](https://raw.githubusercontent.com/set-soft/ComfyUI-ImageMisc/refs/heads/main/example_workflows/resize.json)
 
-[![resize.json](example_workflows/resize.jpg)](https://raw.githubusercontent.com/set-soft/ComfyUI-ImageMisc/refs/heads/main/example_workflows/resize.json) :
-
 Shows the most common uses of the resize and padding nodes. You can see how various modes and options affects the result and how the different interpolation methods works. It shows how masks and RGBA images are handled.
+
+[![resize.json](example_workflows/resize.jpg)](https://raw.githubusercontent.com/set-soft/ComfyUI-ImageMisc/refs/heads/main/example_workflows/resize.json) :
 
 
 ## &#x0001F4DD; Usage Notes

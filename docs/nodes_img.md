@@ -1,0 +1,257 @@
+# 1. Image Download and Load
+   - **Display Name:** `Image Download and Load`
+   - **Internal Name:** `SET_ImageDownload`
+   - **Category:** `image/io`
+   - **Description:** Downloads an image file from a URL into the `ComfyUI/input/` directory if it's not already there, and then loads it as an image and mask. This is perfect for creating self-contained, shareable workflows with example image.
+   - **Inputs:**
+     - `image_bypass` (IMAGE, Optional): If an image is provided here it will be used for the output. You can connect a `Load Image` node here, if the connected node is muted (bypassed) we download the file, otherwise we use the image from the `Load Image` node.
+     - `mask_bypass` (MASK, Optional): This input complements `image_bypass`.
+     - `base_url` (STRING): The URL of the directory containing the image file.
+     - `filename` (STRING): The name of the image file to download (e.g., photo.jpg, art.png).
+     - `local_name` (STRING, optional): The name used locally. Leave blank to use `filename`.
+     - `embed_transparency` (BOOLEAN, optional): Create RGBA images when they have transparency. Not all nodes supports them.
+   - **Output:**
+     - `image` (IMAGE): The loaded image.
+     - `alpha_mask` (MASK): The alpha mask for the loaded image.
+   - **Behavior Details:**
+     - **Caching:** The node checks the `ComfyUI/input/` folder first. If the file with the specified `filename` already exists, the download is skipped.
+     - **Bypass:** If only one of `image_bypass` and `mask_bypass` is connected the other will be assumed to be empty. You should connect both or avoid using the output corresponding to the unconnected input.
+
+# 2. Face Composite
+   - **Display Name:** `Face Composite`
+   - **Internal Name:** `SET_CompositeFace`
+   - **Category:** `image/manipulation`
+   - **Description:** This node is designed for complex batch operations where a single reference image generates multiple animated or processed frames. It handles an **M-to-N** relationship.
+   - **Purpose:** The primary use case is for animation workflows (e.g., using AnimateDiff or SVD) where you:
+      1.  Extract a face from **one** source image.
+      2.  Generate **N** animated frames of that face.
+      3.  Paste each of the **N** animated frames back onto the original source image to create an animated sequence.
+   - **Inputs:**
+     - `animated` (`IMAGE`): A batch of `M*N` cropped/processed images (e.g., the animated faces).
+     - `reference` (`IMAGE`): A batch of `M` original context images that the faces were extracted from.
+     - `bboxes` (`BBOX`): A list of `M` bounding boxes. Each box in the list must correspond to a `reference` image, defining the location for the paste operation. Format: (X, Y, W, H)
+   - **Output:**
+     - `images` (`IMAGE`): The final output batch of `M*N` full-size images. Each image consists of a `reference` image with one of the `animated` frames pasted onto it.
+   - **How it Works:**
+     - For each of the `M` reference images and its corresponding bounding box, the node takes the next `N` frames from the `animated` batch. It then pastes each of these `N` frames onto a *copy* of the reference image, generating `N` final output frames. This process is repeated for all `M` reference images.
+     - The animated frame is automatically resized to fit the bounding box dimensions before pasting. The pasting logic safely handles cases where the bbox is partially outside the image boundaries.
+
+# 3. Face Composite (frame by frame)
+   - **Display Name:** `"Face Composite (frame by frame)`
+   - **Internal Name:** `SET_CompositeFaceFrameByFrame`
+   - **Category:** `image/manipulation`
+   - **Description:** This node is a simplified variant for **1-to-1** compositing. It is perfect for video processing workflows where you need to paste a sequence of processed frames back into the original video sequence at a static location.
+   - **Purpose:** Ideal for tasks like video face restoration, stylization, or simple lip-sync, where:
+      1.  A video is loaded as a sequence of `N` frames.
+      2.  A corresponding sequence of `N` processed/animated frames is generated.
+      3.  Each processed frame needs to be pasted back into its corresponding original frame at the same location.
+   - **Inputs:**
+     - `animated` (`IMAGE`): A batch of `N` processed frames.
+     - `reference` (`IMAGE`): A batch of `N` original frames. **Must have the same batch size as `animated`**.
+     - `bboxes` (`BBOX`): A list of bounding boxes. **Only the first bbox in the list is used** as the static paste location for all frames.
+   - **Output:**
+     - `images` (`IMAGE`): The final batch of `N` composited frames.
+   - **How it Works:** The node iterates from frame 0 to N-1. In each step, it takes the i-th `animated` frame and the i-th `reference` frame. It then pastes the animated frame onto the reference frame using the coordinates from the single, static bounding box.
+
+
+# 4. Normalize Image to ImageNet
+   - **Display Name:** `"Normalize Image to ImageNet`
+   - **Internal Name:** `SET_NormalizeToImageNetDataset`
+   - **Category:** `image/normalization`
+   - **Description:** Normalizes an image tensor using the mean and standard deviation of the ImageNet dataset.
+   - **Purpose:** Essential for pre-processing images before feeding them into models that were pre-trained on ImageNet (e.g., most ResNet, VGG, EfficientNet models).
+   - **Inputs:**
+     - `image` (`IMAGE`): A standard ComfyUI image tensor in the `[0, 1]` range.
+   - **Output:**
+     - `image` (`IMAGE`): The normalized image tensor. The value range will be altered significantly.
+   - **How it Works:**  For each channel, it performs the operation `output = (input - mean) / std`, using the standard ImageNet values:
+    - **Mean:** `[0.485, 0.456, 0.406]`
+    - **Std Dev:** `[0.229, 0.224, 0.225]`
+
+# 5. Normalize Image to [-0.5, 0.5]
+
+- **Display Name:** `Normalize Image to [-0.5, 0.5]`
+- **Internal Name:** `SET_NormalizeToMinus05_05`
+- **Category:** `image/normalization`
+- **Description:** Normalizes an image tensor by centering its values around zero.
+- **Purpose:** Useful for models trained from scratch or those that expect input data in the `[-0.5, 0.5]` range. This can help stabilize training.
+- **Inputs:**
+  - `image` (`IMAGE`): A standard ComfyUI image tensor in the `[0, 1]` range.
+- **Output:**
+  - `image` (`IMAGE`): The normalized image tensor, with values in the `[-0.5, 0.5]` range.
+- **How it Works:** For each channel, it performs the operation `output = (input - mean) / std`, using:
+  - **Mean:** `[0.5, 0.5, 0.5]`
+  - **Std Dev:** `[1.0, 1.0, 1.0]`
+
+# 6. Normalize Image to [-1, 1]
+
+- **Display Name:** `Normalize Image to [-1, 1]`
+- **Internal Name:** `SET_NormalizeToMinus1_1`
+- **Category:** `image/normalization`
+- **Description:** Normalizes an image tensor to the `[-1, 1]` range.
+- **Purpose:** A common requirement for certain model architectures, particularly Generative Adversarial Networks (GANs) and models using the `tanh` activation function in their output layer.
+- **Inputs:**
+  - `image` (`IMAGE`): A standard ComfyUI image tensor in the `[0, 1]` range.
+- **Output:**
+  - `image` (`IMAGE`): The normalized image tensor, with values in the `[-1, 1]` range.
+- **How it Works:** For each channel, it performs the operation `output = (input - mean) / std`, using:
+  - **Mean:** `[0.5, 0.5, 0.5]`
+  - **Std Dev:** `[0.5, 0.5, 0.5]`
+
+# 7. Apply Mask using AFFCE
+
+- **Display Name:** `Apply Mask using AFFCE`
+- **Internal Name:** `SET_ApplyMaskAFFCE`
+- **Category:** `image/manipulation`
+- **Description:** Applies a mask to an image using [Approximate Fast Foreground Colour Estimation](https://github.com/Photoroom/fast-foreground-estimation). This blends the image contour in a better way.
+- **Purpose:** Used to apply the mask of a background removal model.
+- **Inputs:**
+  - `images` (`IMAGE`): One ore more ComfyUI images
+  - `masks` (`MASK`): Masks to apply
+  - `blur_size` (`INT`): Diameter for the coarse gaussian blur
+  - `blur_size_two` (`INT`): Diameter for the fine gaussian blur
+  - `fill_color` (`BOOLEAN`): When enabled the removed image is replaced by a color, the output is an RGB image. Otherwise the removed part becomes transparent and the output is an RGBA image.
+  - `color` (`STRING`): A string representing a color to be used when `fill_color` is enabled. Can be an hexadecimal RGB (i.e. `#AABBCC`) or comma separated RGB components. The components can be in the [0-255] or [0-1.0] range.
+  - `batched` (`BOOLEAN`): Process all the images at once. Otherwise do it one at a time.
+- **Output:**
+  - `image` (`IMAGE`): The image after applying the mask.
+  - `mask` (`MASK`): The input mask
+
+
+# 8. Estimate foreground (AFFCE)
+
+- **Display Name:** `Estimate foreground (AFFCE)`
+- **Internal Name:** `SET_AFFCE`
+- **Category:** `image/foreground`
+- **Description:** Estimates the foreground of an image using [Approximate Fast Foreground Colour Estimation](https://github.com/Photoroom/fast-foreground-estimation). The result is suitable for background replacement.
+- **Purpose:** Used to get a better foreground for background removal.
+- **Inputs:**
+  - `images` (`IMAGE`): One ore more ComfyUI images
+  - `masks` (`MASK`): Masks to apply
+  - `blur_size` (`INT`): Diameter for the coarse gaussian blur
+  - `blur_size_two` (`INT`): Diameter for the fine gaussian blur
+  - `batched` (`BOOLEAN`): Process all the images at once. Otherwise do it one at a time.
+- **Output:**
+  - `image` (`IMAGE`): The image after foreground estimation.
+  - `mask` (`MASK`): The input mask
+
+
+# 9. Estimate foreground (FMLFE)
+
+- **Display Name:** `Estimate foreground (FMLFE)`
+- **Internal Name:** `SET_FMLFE`
+- **Category:** `image/foreground`
+- **Description:** Estimates the foreground of an image using [Fast Multi-Level Foreground Estimation](https://arxiv.org/abs/2006.14970). The result is suitable for background replacement.
+- **Purpose:** Used to get a better foreground for background removal.
+- **Inputs:**
+  - `images` (`IMAGE`): The source image(s) from which to estimate the foreground and background.
+  - `masks` (`MASK`): The alpha matte that guides the estimation. White areas are treated as known foreground, black as known background, and gray areas are the semi-transparent regions the algorithm will solve for.
+  - `implementation" (`auto`, `cupy`, `opencl`, `numba`, `torch`): Which implementation to use. The `auto` will use the fastest available. The `torch` implementation is slow and approximated, but doesn't need extra dependencies. The `numba` implementation is good and just needs [Numba](https://numba.pydata.org/). The `cupy` implementation is the fastest, but needs [CuPy](https://cupy.dev/) and a full CUDA environment.
+  - `regularization` (`FLOAT`): The regularization strength (epsilon). This acts as a smoothness prior. Higher values result in smoother, more blended foreground and background colors, but may lose very fine details. Lower values preserve more detail but can be noisier.
+  - `n_small_iterations` (`INT`): The number of solver iterations to perform on the lower-resolution levels of the image pyramid. More iterations can improve quality at the cost of speed.
+  - `n_big_iterations` (`INT`): The number of solver iterations to perform on the higher-resolution (larger) levels of the image pyramid. Fewer iterations are typically needed at high resolution as the details are propagated up from the smaller levels.
+  - `small_size` (`INT`): The pixel dimension threshold. Image pyramid levels smaller than this size will use the higher 'n_small_iterations' count, while larger levels will use 'n_big_iterations'.
+  - `gradient_weight` (`FLOAT`): Controls how strongly the edges in the alpha matte influence color blending. A higher value makes the algorithm respect the mask's edges more, leading to sharper color boundaries. A lower value allows more color bleeding, an effect similar to increasing regularization.
+- **Output:**
+  - `image` (`IMAGE`): The estimated foreground image (F). This is a full-color image where the algorithm has estimated the true, un-blended color of the foreground object.
+  - `mask` (`MASK`): The estimated background image (B). The algorithm has effectively "inpainted" the area behind the foreground object, creating a clean background plate.
+
+
+# 10. Create Empty Image
+
+- **Display Name:** `Create Empty Image`
+- **Internal Name:** `SET_CreateEmptyImage`
+- **Category:** `image/generation`
+- **Description:** Creates an image filled with a solid color. Similar to standard `EmptyImage`, but you can use an image as reference and you have more options to select the color.
+- **Purpose:** Create an empty image
+- **Inputs:**
+  - `width` (`INT`): The width of the new image in pixels. This value is ignored if a `reference` is provided.
+  - `height` (`INT`): The height of the new image in pixels. This value is ignored if a `reference` is provided.
+  - `batch_size` (`INT`): The number of images to create in the batch. This value is ignored if a `reference` is provided.
+  - `color` (`STRING`): The solid color to fill the image with. Can be a named color (e.g., "black", "red"), a hex string (e.g., "#FF0000", "00ff00"), or comma-separated components in the [0, 255] or [0.0, 1.0] range.
+  - `reference` (`IMAGE`, optional): If an image is connected here, its dimensions (batch size, height, and width) will be used for the new image, overriding the manual width, height, and batch_size inputs.
+- **Output:**
+  - `image` (`IMAGE`): A new image tensor of the specified size and color.
+
+
+# 11. Pad Image (KJ/SET)
+
+- **Display Name:** `Pad Image (KJ/SET)`
+- **Internal Name:** `SET_ImagePad`
+- **Category:** `image/manipulation`
+- **Description:** Pads the input image and an optional mask with specified padding on each side. It offers several modes to fill the padded area.
+- **Purpose:** To add borders or expand the canvas of an image using various fill methods, such as solid color, edge pixel replication, or a blurred background effect.
+- **Inputs:**
+  - `image` (`IMAGE`): The image to be padded.
+  - `left` (`INT`): The number of pixels of padding to add to the left side.
+  - `right` (`INT`): The number of pixels of padding to add to the right side.
+  - `top` (`INT`): The number of pixels of padding to add to the top side.
+  - `bottom` (`INT`): The number of pixels of padding to add to the bottom side.
+  - `extra_padding` (`INT`): Additional padding applied to all sides. Note: If `target_width` and `target_height` are used, this value will shrink the source image before padding.
+  - `pad_mode` (`STRING`): The method used to fill the padded area.
+    - `edge`: Fills with the average color of the nearest edge.
+    - `edge_pixel`: Repeats the outermost line of pixels.
+    - `color`: Fills with the specified solid `color`.
+    - `pillarbox_blur`: Fills with a blurred, desaturated, and dimmed version of the original image, scaled to fit the new dimensions.
+  - `color` (`STRING`): The solid color to use when `pad_mode` is "color". Accepts hex codes, color names, and RGB values.
+  - `mask` (`MASK`, optional): An optional mask to be padded along with the image.
+  - `target_width` (`INT`, optional): If provided with `target_height`, pads the image to this exact width, centering the original content. This overrides the `left` and `right` inputs.
+  - `target_height` (`INT`, optional): If provided with `target_width`, pads the image to this exact height, centering the original content. This overrides the `top` and `bottom` inputs.
+  - `pad_transparency` (`FLOAT`, optional): Controls the opacity of the padded area in the output mask. 1.0 is fully transparent (no mask), and 0.0 is fully opaque (masked).
+- **Outputs:**
+  - `images` (`IMAGE`): The padded image tensor.
+  - `masks` (`MASK`): The padded mask tensor.
+
+
+# 12. Resize Image (KJ/SET)
+
+- **Display Name:** `Resize Image (KJ/SET)`
+- **Internal Name:** `SET_ImageResize`
+- **Category:** `image/manipulation`
+- **Description:** A comprehensive node to resize, crop, and pad images. It provides multiple methods for handling aspect ratio and can optionally process large batches in smaller chunks to conserve memory. This node uses [Pad Image](#11-pad-image-kjset) so please also read its documentation.
+- **Purpose:** To change the dimensions of an image with fine-grained control over how the aspect ratio is preserved, including stretching, cropping, or padding to fit the target size.
+- **Inputs:**
+  - `image` (`IMAGE`): The source image to resize.
+  - `width` (`INT`): The target width in pixels. If set to 0, it uses the original width or the width from `get_image_size`.
+  - `height` (`INT`): The target height in pixels. If set to 0, it uses the original height or the height from `get_image_size`.
+  - `upscale_method` (`STRING`): The interpolation algorithm to use for resizing (e.g., `bicubic`, `lanczos`, `nearest-exact`).
+  - `keep_proportion` (`STRING`): Defines how to handle the aspect ratio when resizing.
+    - `stretch`: Ignores aspect ratio and forces the image to the exact target dimensions.
+    - `resize`: Maintains aspect ratio, fitting the image within the target dimensions. The final output size may be smaller than the target on one axis.
+    - `pad`, `pad_edge`, `pad_edge_pixel`: Resizes the image to fit within the target dimensions while maintaining aspect ratio, then pads the remaining space to meet the exact target dimensions.
+    - `crop`: Resizes and crops the image to match the target aspect ratio and size.
+    - `pillarbox_blur`: Resizes the image to fit and fills the remaining space with a blurred background.
+  - `pad_color` (`STRING`): The solid color to use for padding when `keep_proportion` is set to `pad`.
+  - `crop_position` (`STRING`): The anchor point (`center`, `top`, `left`, etc.) for `crop` and `pad` operations.
+  - `divisible_by` (`INT`): Ensures the final width and height are multiples of this number, which is often required for models like VAEs.
+  - `mask` (`MASK`, optional): An optional mask to be transformed along with the image.
+  - `device` (`STRING`, optional): The computation device (`cpu` or `gpu`) to use for the operation. Note that `lanczos` is not supported on the GPU.
+  - `get_image_size` (`IMAGE`, optional): If an image is connected, its dimensions will be used as the target width and height, overriding the manual inputs.
+  - `per_batch` (`INT`, optional): If greater than 0, processes the input batch in smaller sub-batches of this size to reduce memory usage.
+  - `pad_transparency` (`FLOAT`, optional): Controls the opacity of the padded area in the output mask.
+- **Outputs:**
+  - `IMAGE` (`IMAGE`): The transformed image.
+  - `width` (`INT`): The final width of the output image.
+  - `height` (`INT`): The final height of the output image.
+  - `mask` (`MASK`): The transformed mask.
+
+
+# 13. Resize Mask (KJ/SET)
+
+- **Display Name:** `Resize Mask (KJ/SET)`
+- **Internal Name:** `SET_ResizeMask`
+- **Category:** `image/manipulation`
+- **Description:** Resizes a mask or a batch of masks to the specified width and height, with options to preserve proportions.
+- **Purpose:** A dedicated and simplified node for resizing masks, which often require different interpolation methods (like `nearest-exact`) than images.
+- **Inputs:**
+  - `mask` (`MASK`): The mask to be resized.
+  - `width` (`INT`): The target width for the new mask.
+  - `height` (`INT`): The target height for the new mask.
+  - `keep_proportions` (`BOOLEAN`): If `True`, maintains the original aspect ratio, fitting the mask within the target dimensions.
+  - `upscale_method` (`STRING`): The interpolation algorithm to use for resizing. Defaults to `nearest-exact`, which is ideal for masks to avoid creating grayscale values.
+  - `crop` (`STRING`): If and how to crop the mask (`disabled` or `center`).
+  - `get_image_size` (`IMAGE`, optional): If an image is connected here, its dimensions will be used as the target width and height.
+- **Outputs:**
+  - `mask` (`MASK`): The resized mask tensor.
+  - `width` (`INT`): The final width of the output mask.
+  - `height` (`INT`): The final height of the output mask.

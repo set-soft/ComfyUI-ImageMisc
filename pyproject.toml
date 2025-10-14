@@ -24,6 +24,7 @@ Repository = "https://github.com/set-soft/ComfyUI-ImageMisc"
 [tool.comfy]
 PublisherId = "set-soft"
 DisplayName = "Image Misc"
+Icon = "https://raw.githubusercontent.com/set-soft/ComfyUI-ImageMisc/main/assets/Icon_400x400.jpg"
 
 [tool.setuptools.dynamic]
 version = {attr = "nodes.__version__"}

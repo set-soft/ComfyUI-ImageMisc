@@ -27,6 +27,9 @@ Currently we just have a few nodes used by other nodes I maintain.
   - [Estimate foreground (AFFCE)](#8-estimate-foreground-affce)
   - [Estimate foreground (FMLFE)](#9-estimate-foreground-fmlfe)
   - [Create Empty Image](#10-create-empty-image)
+  - [Pad Image](#11-pad-image-kjset)
+  - [Resize Image](#12-resize-image-kjset)
+  - [Resize Mask](#13-resize-mask-kjset)
 - &#x0001F4DD; [Usage Notes](#-usage-notes)
 - &#x0001F4DC; [Project History](#-project-history)
 - &#x2696;&#xFE0F; [License](#&#xFE0F;-license)
@@ -210,6 +213,88 @@ Currently we just have a few nodes used by other nodes I maintain.
   - `image` (`IMAGE`): A new image tensor of the specified size and color.
 
 
+### 11. Pad Image (KJ/SET)
+
+- **Display Name:** `Pad Image (KJ/SET)`
+- **Internal Name:** `SET_ImagePad`
+- **Category:** `image/manipulation`
+- **Description:** Pads the input image and an optional mask with specified padding on each side. It offers several modes to fill the padded area.
+- **Purpose:** To add borders or expand the canvas of an image using various fill methods, such as solid color, edge pixel replication, or a blurred background effect.
+- **Inputs:**
+  - `image` (`IMAGE`): The image to be padded.
+  - `left` (`INT`): The number of pixels of padding to add to the left side.
+  - `right` (`INT`): The number of pixels of padding to add to the right side.
+  - `top` (`INT`): The number of pixels of padding to add to the top side.
+  - `bottom` (`INT`): The number of pixels of padding to add to the bottom side.
+  - `extra_padding` (`INT`): Additional padding applied to all sides. Note: If `target_width` and `target_height` are used, this value will shrink the source image before padding.
+  - `pad_mode` (`STRING`): The method used to fill the padded area.
+    - `edge`: Fills with the average color of the nearest edge.
+    - `edge_pixel`: Repeats the outermost line of pixels.
+    - `color`: Fills with the specified solid `color`.
+    - `pillarbox_blur`: Fills with a blurred, desaturated, and dimmed version of the original image, scaled to fit the new dimensions.
+  - `color` (`STRING`): The solid color to use when `pad_mode` is "color". Accepts hex codes, color names, and RGB values.
+  - `mask` (`MASK`, optional): An optional mask to be padded along with the image.
+  - `target_width` (`INT`, optional): If provided with `target_height`, pads the image to this exact width, centering the original content. This overrides the `left` and `right` inputs.
+  - `target_height` (`INT`, optional): If provided with `target_width`, pads the image to this exact height, centering the original content. This overrides the `top` and `bottom` inputs.
+  - `pad_transparency` (`FLOAT`, optional): Controls the opacity of the padded area in the output mask. 1.0 is fully transparent (no mask), and 0.0 is fully opaque (masked).
+- **Outputs:**
+  - `images` (`IMAGE`): The padded image tensor.
+  - `masks` (`MASK`): The padded mask tensor.
+
+
+### 12. Resize Image (KJ/SET)
+
+- **Display Name:** `Resize Image (KJ/SET)`
+- **Internal Name:** `SET_ImageResize`
+- **Category:** `image/manipulation`
+- **Description:** A comprehensive node to resize, crop, and pad images. It provides multiple methods for handling aspect ratio and can optionally process large batches in smaller chunks to conserve memory. This node uses [Pad Image](#11-pad-image-kjset) so please also read its documentation.
+- **Purpose:** To change the dimensions of an image with fine-grained control over how the aspect ratio is preserved, including stretching, cropping, or padding to fit the target size.
+- **Inputs:**
+  - `image` (`IMAGE`): The source image to resize.
+  - `width` (`INT`): The target width in pixels. If set to 0, it uses the original width or the width from `get_image_size`.
+  - `height` (`INT`): The target height in pixels. If set to 0, it uses the original height or the height from `get_image_size`.
+  - `upscale_method` (`STRING`): The interpolation algorithm to use for resizing (e.g., `bicubic`, `lanczos`, `nearest-exact`).
+  - `keep_proportion` (`STRING`): Defines how to handle the aspect ratio when resizing.
+    - `stretch`: Ignores aspect ratio and forces the image to the exact target dimensions.
+    - `resize`: Maintains aspect ratio, fitting the image within the target dimensions. The final output size may be smaller than the target on one axis.
+    - `pad`, `pad_edge`, `pad_edge_pixel`: Resizes the image to fit within the target dimensions while maintaining aspect ratio, then pads the remaining space to meet the exact target dimensions.
+    - `crop`: Resizes and crops the image to match the target aspect ratio and size.
+    - `pillarbox_blur`: Resizes the image to fit and fills the remaining space with a blurred background.
+  - `pad_color` (`STRING`): The solid color to use for padding when `keep_proportion` is set to `pad`.
+  - `crop_position` (`STRING`): The anchor point (`center`, `top`, `left`, etc.) for `crop` and `pad` operations.
+  - `divisible_by` (`INT`): Ensures the final width and height are multiples of this number, which is often required for models like VAEs.
+  - `mask` (`MASK`, optional): An optional mask to be transformed along with the image.
+  - `device` (`STRING`, optional): The computation device (`cpu` or `gpu`) to use for the operation. Note that `lanczos` is not supported on the GPU.
+  - `get_image_size` (`IMAGE`, optional): If an image is connected, its dimensions will be used as the target width and height, overriding the manual inputs.
+  - `per_batch` (`INT`, optional): If greater than 0, processes the input batch in smaller sub-batches of this size to reduce memory usage.
+  - `pad_transparency` (`FLOAT`, optional): Controls the opacity of the padded area in the output mask.
+- **Outputs:**
+  - `IMAGE` (`IMAGE`): The transformed image.
+  - `width` (`INT`): The final width of the output image.
+  - `height` (`INT`): The final height of the output image.
+  - `mask` (`MASK`): The transformed mask.
+
+
+### 13. Resize Mask (KJ/SET)
+
+- **Display Name:** `Resize Mask (KJ/SET)`
+- **Internal Name:** `SET_ResizeMask`
+- **Category:** `image/manipulation`
+- **Description:** Resizes a mask or a batch of masks to the specified width and height, with options to preserve proportions.
+- **Purpose:** A dedicated and simplified node for resizing masks, which often require different interpolation methods (like `nearest-exact`) than images.
+- **Inputs:**
+  - `mask` (`MASK`): The mask to be resized.
+  - `width` (`INT`): The target width for the new mask.
+  - `height` (`INT`): The target height for the new mask.
+  - `keep_proportions` (`BOOLEAN`): If `True`, maintains the original aspect ratio, fitting the mask within the target dimensions.
+  - `upscale_method` (`STRING`): The interpolation algorithm to use for resizing. Defaults to `nearest-exact`, which is ideal for masks to avoid creating grayscale values.
+  - `crop` (`STRING`): If and how to crop the mask (`disabled` or `center`).
+  - `get_image_size` (`IMAGE`, optional): If an image is connected here, its dimensions will be used as the target width and height.
+- **Outputs:**
+  - `mask` (`MASK`): The resized mask tensor.
+  - `width` (`INT`): The final width of the output mask.
+  - `height` (`INT`): The final height of the output mask.
+
 ## &#x0001F680; Installation
 
 You can install the nodes from the ComfyUI nodes manager, the name is *Image Misc*, or just do it manually:
@@ -222,7 +307,7 @@ You can install the nodes from the ComfyUI nodes manager, the name is *Image Mis
 2.  Install dependencies: `pip install -r ComfyUI/custom_nodes/ComfyUI-ImageMisc/requirements.txt`
 3.  Restart ComfyUI.
 
-The nodes should then appear under the "image/io" category in the "Add Node" menu.
+The nodes should then appear under the "image/io", "image/manipulation", "image/normalization" and "image/foreground" categories in the "Add Node" menu.
 
 
 ## &#x0001F4E6; Dependencies
@@ -240,6 +325,7 @@ The nodes should then appear under the "image/io" category in the "Add Node" men
 Once installed the examples are available in the ComfyUI workflow templates, in the *Image Misc* section (or ComfyUI-ImageMisc).
 
 - [image_download.json](example_workflows/image_download.json): Shows how to use the image downloader node.
+- [resize.json](example_workflows/resize.json): Shows the most common uses of the resize and padding nodes. You can see how various modes and options affects the result and how the different interpolation methods works. It shows how masks and RGBA images are handled.
 
 
 ## &#x0001F4DD; Usage Notes
@@ -272,3 +358,4 @@ Once installed the examples are available in the ComfyUI workflow templates, in 
 ## &#x0001F64F; Attributions
 
 - Good part of the initial code and this README was generated using Gemini 2.5 Pro.
+- The *Pad Image*, *Resize Image* and *Resize Mask* are from [KJNodes](https://github.com/kijai/ComfyUI-KJNodes) by [Kijai](https://github.com/kijai) (Jukka Seppänen)

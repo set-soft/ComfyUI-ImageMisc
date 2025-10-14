@@ -2,7 +2,11 @@
 name = "image-misc"
 description = """
 Miscellaneous nodes for image manipulation.
-Currently just download image with bypass, so you can create workflows including image examples.
+Download image with bypass, so you can create workflows including image examples.
+Foreground estimation and mask apply.
+Face composition nodes (to reinsert a processed face).
+Advanced image/mask pad/resize (from KJNodes with some additions).
+Normalization nodes for low level image pre-processing.
 No extra dependencies, just an internal module.
 """
 # This is the modern Python mechanism, but not supported

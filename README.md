@@ -31,6 +31,7 @@ Currently we just have a few nodes used by other nodes I maintain.
     - [Pad Image](docs/nodes_img.md#11-pad-image-kjset)
     - [Resize Image](docs/nodes_img.md#12-resize-image-kjset)
     - [Resize Mask](docs/nodes_img.md#13-resize-mask-kjset)
+    - [Image with text label](docs/nodes_img.md#16-image-with-text-label)
   - Normalization:
     - [Normalize Image to ImageNet](docs/nodes_img.md#4-normalize-image-to-imagenet)
     - [Normalize Image to [-0.5, 0.5]](docs/nodes_img.md#5-normalize-image-to-05-05)

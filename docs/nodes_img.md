@@ -286,3 +286,22 @@
      - `std_blue` (`FLOAT`): Standard deviation for the blue channel
    - **Output:**
      - `parameters` (`NORM_PARAMS`): The parameters for the normalization. This is a dict with two keys, `mean` and `std`, which are lists with the R, G, B parameters.
+
+# 16. Image with text label
+   - **Display Name:** `Image with text label`
+   - **Internal Name:** `SET_ImageWithTextLabel`
+   - **Category:** `image/manipulation`
+   - **Description:** Adds a border and a label to an image or a mask. This can be used to create comparison grids. Use the Comfy-Core `Image Stitch` node to concatenate the images.
+   - **Purpose:** Intended to create labeled images
+   - **Inputs:**
+     - `image` (`IMAGE`): Image to use, leave unconnected when using a mask.
+     - `mask` ("MASK`): Mask to be used as image, leave unconnected when using an image.
+     - `text` (`STRING`): Text to use as label. Can contain multiple lines.
+     - `side` ("top", "bottom", "left", "right"): The side where the label will be placed.
+     - `label_size` (`STRING`): The width (left/right) or height (top/bottom) of the area for the label. Can be expressed as a percentage (i.e. 10%) or absolute number of pixels.
+     - `separation` (`STRING`): The size of the border around the image. Can be expressed as a percentage (i.e. 1%) or absolute number of pixels.
+     - `background_color` (`STRING`): Color to fill the border and the label area. Can be an hexadecimal RGB (i.e. `#AABBCC`) or comma separated RGB components. The components can be in the [0-255] or [0-1.0] range. Some color names are also supported.
+     - `foreground_color` (`STRING`): Color the label font. Can be an hexadecimal RGB (i.e. `#AABBCC`) or comma separated RGB components. The components can be in the [0-255] or [0-1.0] range. Some color names are also supported.
+     - `font_name` (`STRING`): The name of the font to use for the text.
+   - **Output:**
+     - `IMAGE` (`IMAGE`): The generated RGB image.

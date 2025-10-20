@@ -10,12 +10,12 @@
 from copy import deepcopy
 import numpy as np
 import os
-from PIL import Image  # Import the Python Imaging Library
+from PIL import Image, ImageDraw, ImageFont  # Import the Python Imaging Library
 from seconohe.apply_mask import apply_mask
 from seconohe.foreground_estimation.affce import affce
 from seconohe.foreground_estimation.fmlfe import fmlfe, IMPL_PRIORITY
 from seconohe.downloader import download_file
-from seconohe.color import color_to_rgb_float
+from seconohe.color import color_to_rgb_float, color_to_rgb_uint8
 # We are the main source, so we use the main_logger
 from . import main_logger
 import torch
@@ -95,12 +95,18 @@ NORM_PARAM = ("FLOAT", {
                 "max": 1.0,
                 "step": 0.1,
                 "display": "number"})
+# A dictionary to cache loaded fonts
+font_cache = {}
 
 
 def tensor_to_pil(tensor: torch.Tensor) -> Image.Image:
     """Converts a single image tensor (H, W, C) [0, 1] to a Pillow Image."""
     np_image = (tensor.cpu().numpy() * 255).astype(np.uint8)
-    return Image.fromarray(np_image)
+
+    if tensor.dim() == 2:
+        return Image.fromarray(np_image, 'L')
+    else:
+        return Image.fromarray(np_image, 'RGB')
 
 
 def pil_to_tensor(pil_image: Image.Image) -> torch.Tensor:
@@ -112,6 +118,22 @@ def pil_to_tensor(pil_image: Image.Image) -> torch.Tensor:
 def upscale(image, width, height, upscale_method):
     # return F.interpolate(image, size=(height, width), mode=upscale_method)
     return common_upscale(image, width, height, upscale_method, crop="disabled")
+
+
+def parse_size(size_str, reference_dim):
+    """Parses a size string which can be pixels or a percentage."""
+    size_str = size_str.strip()
+    if size_str.endswith('%'):
+        try:
+            percentage = float(size_str[:-1])
+            return int(reference_dim * (percentage / 100.0))
+        except ValueError:
+            return 0
+    else:
+        try:
+            return int(size_str)
+        except ValueError:
+            return 0
 
 
 if has_load_image:
@@ -1299,3 +1321,207 @@ class ResizeMask:
             out_mask = common_upscale(mask.unsqueeze(1), width, height, upscale_method, crop=crop).squeeze(1)
 
         return (out_mask, out_mask.shape[2], out_mask.shape[1],)
+
+
+# #################################################################################################
+# ImageWithTextLabel
+# #################################################################################################
+
+
+def load_font(font_name, font_size):
+    """Loads a font from the cache or from file."""
+    if (font_name, font_size) in font_cache:
+        return font_cache[(font_name, font_size)]
+
+    try:
+        font = ImageFont.truetype(font_name, font_size)
+    except IOError:
+        try:
+            # Fallback for Linux
+            font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+            if not os.path.exists(font_path):
+                # Fallback to a common system font if the specified one isn't found
+                font_path = os.path.join("C:", os.sep, "Windows", "Fonts", f"{font_name}.ttf")
+            font = ImageFont.truetype(font_path, font_size)
+        except IOError:
+            # If all else fails, use the default Pillow font
+            logger.warning(f"Font '{font_name}' not found. Falling back to default font.")
+            font = ImageFont.load_default()
+
+    font_cache[(font_name, font_size)] = font
+    return font
+
+
+class ImageWithTextLabel:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "text": ("STRING", {
+                    "multiline": True, "default": "Your text here",
+                    "tooltip": "Label for this image"}),
+                "side": (["top", "bottom", "left", "right"],),
+                "label_size": ("STRING", {
+                    "default": "10%",
+                    "tooltip": "Expressed as a percentage (i.e. 10%) or absolute number of pixels"}),
+                "separation": ("STRING", {
+                    "default": "1%",
+                    "tooltip": "Expressed as a percentage (i.e. 1%) or absolute number of pixels"}),
+                "background_color": ("STRING", {"default": "white"}),
+                "foreground_color": ("STRING", {"default": "black"}),
+                "font_name": ("STRING", {"default": "Arial"}),
+            },
+            "optional": {
+                "image": ("IMAGE", {
+                    "tooltip": "Image, leave unconnected when using a mask"}),
+                "mask": ("MASK", {
+                    "tooltip": "Mask to be used as image, leave unconnected when using an image"}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "add_label"
+    CATEGORY = BASE_CATEGORY + "/" + MANIPULATION_CATEGORY
+    DESCRIPTION = ("Adds a text label to an image")
+    UNIQUE_NAME = "SET_ImageWithTextLabel"
+    DISPLAY_NAME = "Image with text label, good for comparison grids"
+
+    def add_label(self, text: str, side: str, label_size: str, separation: int, background_color: str,
+                  foreground_color: str, font_name: str, image: Optional[torch.Tensor] = None,
+                  mask: Optional[torch.Tensor] = None):
+        if image is None and mask is None:
+            raise ValueError("You must provide an image or a mask")
+        image = image if image is not None else mask
+        # Process multiple images in the batch
+        pil_images = [tensor_to_pil(img) for img in image]
+        output_images = []
+
+        for pil_img in pil_images:
+            original_width, original_height = pil_img.size
+
+            # Parse label size
+            if side in ["top", "bottom"]:
+                label_dim = parse_size(label_size, original_height)
+                separation_px = parse_size(separation, original_height)
+            else:  # left, right
+                label_dim = parse_size(label_size, original_width)
+                separation_px = parse_size(separation, original_width)
+
+            # Calculate new canvas dimensions
+            new_width = original_width + 2 * separation_px
+            new_height = original_height + 2 * separation_px
+            if side in ["top", "bottom"]:
+                new_height += label_dim
+            else:  # left, right
+                new_width += label_dim
+
+            # Create new image canvas
+            bg_color_rgb = color_to_rgb_uint8(logger, background_color)
+            canvas = Image.new("RGB", (new_width, new_height), bg_color_rgb)
+
+            # Paste the original image with separation
+            img_paste_position = (separation_px, separation_px)
+            if side == "top":
+                img_paste_position = (separation_px, separation_px + label_dim)
+            elif side == "left":
+                img_paste_position = (separation_px + label_dim, separation_px)
+
+            canvas.paste(pil_img, img_paste_position)
+            draw = ImageDraw.Draw(canvas)
+
+            # Define the text area
+            text_area = (0, 0, 0, 0)
+            if side == "top":
+                text_area = (separation_px, separation_px, new_width - separation_px, separation_px + label_dim)
+            elif side == "bottom":
+                text_area = (separation_px, original_height + separation_px, new_width - separation_px, new_height -
+                             separation_px)
+            elif side == "left":
+                text_area = (separation_px, separation_px, separation_px + label_dim, new_height - separation_px)
+            elif side == "right":
+                text_area = (original_width + separation_px, separation_px, new_width - separation_px, new_height -
+                             separation_px)
+
+            text_area_width = text_area[2] - text_area[0]
+            text_area_height = text_area[3] - text_area[1]
+
+            fg_color_rgb = color_to_rgb_uint8(logger, foreground_color)
+            text_x = text_area[0] + text_area_width / 2
+            text_y = text_area[1] + text_area_height / 2
+            font = None
+
+            # --- Find best font size and render text ---
+            if side in ["top", "bottom"]:
+                # --- HORIZONTAL TEXT LOGIC (with wrapping) ---
+                max_font_size = text_area_height
+                font_size = max_font_size
+                wrapped_text = text
+
+                while font_size > 5:
+                    font = load_font(font_name, font_size)
+
+                    # Simple word wrapping
+                    lines = []
+                    words = text.split()
+                    current_line = ""
+                    for word in words:
+                        if font.getlength(current_line + word + " ") < text_area_width:
+                            current_line += word + " "
+                        else:
+                            lines.append(current_line.strip())
+                            current_line = word + " "
+                    lines.append(current_line.strip())
+                    wrapped_text = "\n".join(lines)
+
+                    # Check if wrapped text fits vertically
+                    bbox = draw.multiline_textbbox((0, 0), wrapped_text, font=font)
+                    text_height = bbox[3] - bbox[1]
+
+                    if text_height <= text_area_height:
+                        break  # Font size is good
+
+                    font_size -= 1
+                else:
+                    logger.warning("Text could not fit into the designated area even at the smallest font size.")
+
+                draw.multiline_text(
+                    (text_x, text_y),
+                    wrapped_text,
+                    fill=fg_color_rgb,
+                    font=font,
+                    anchor="mm",  # middle-middle anchor
+                    align="center"
+                )
+
+            else:  # --- VERTICAL TEXT LOGIC ---
+                max_font_size = text_area_width  # For vertical, font size is constrained by width
+                font_size = max_font_size
+
+                while font_size > 5:
+                    font = load_font(font_name, font_size)
+                    # Use textbbox with direction to measure final size
+                    bbox = draw.textbbox((0, 0), text, font=font, direction="ttb")
+                    text_width = bbox[2] - bbox[0]
+                    text_height = bbox[3] - bbox[1]
+
+                    # Check if the vertically rendered text fits in the area
+                    if text_width <= text_area_width and text_height <= text_area_height:
+                        break  # Font size is good
+
+                    font_size -= 1
+                else:
+                    logger.warning("Text could not fit into the designated area even at the smallest font size.")
+
+                draw.text(
+                    (text_x, text_y),
+                    text,
+                    fill=fg_color_rgb,
+                    font=font,
+                    anchor="mm",  # middle-middle anchor
+                    direction="ttb"  # Top-to-bottom direction
+                )
+
+            output_images.append(pil_to_tensor(canvas).unsqueeze(0))
+
+        # Stack the processed images back into a single tensor
+        return (torch.cat(output_images, dim=0),)

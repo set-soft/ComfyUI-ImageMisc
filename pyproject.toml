@@ -13,7 +13,7 @@ No extra dependencies, just an internal module.
 # dynamic = ["version"]
 # license = "GPL-3.0-or-later"
 # Only this is supported :-(
-version = "1.3.0"
+version = "1.4.0"
 license = { file = "LICENSE" }
 # The following is just ignored
 dependencies = ["seconohe"]

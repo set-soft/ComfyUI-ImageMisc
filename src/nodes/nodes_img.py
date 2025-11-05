@@ -10,26 +10,31 @@
 from copy import deepcopy
 import numpy as np
 import os
+from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont  # Import the Python Imaging Library
+import re
 from seconohe.apply_mask import apply_mask
 from seconohe.foreground_estimation.affce import affce
 from seconohe.foreground_estimation.fmlfe import fmlfe, IMPL_PRIORITY
 from seconohe.downloader import download_file
 from seconohe.color import color_to_rgb_float, color_to_rgb_uint8
-# We are the main source, so we use the main_logger
-from . import main_logger
 import torch
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
 from typing import Optional
+
+# We are the main source, so we use the main_logger
+from . import main_logger
+from .helpers import load_image_wrapper
 try:
-    from folder_paths import get_input_directory   # To get the ComfyUI input directory
+    from folder_paths import get_input_directory, get_output_directory
     from comfy import model_management
     from comfy.utils import common_upscale
 except ModuleNotFoundError:
     # No ComfyUI, this is a test environment
     def get_input_directory():
         return ""
+    get_output_directory = get_input_directory
 
 try:
     from nodes import ImageScale
@@ -44,18 +49,13 @@ try:
     from server import PromptServer
 except ModuleNotFoundError:
     PromptServer = None
-try:
-    # We need to import the built-in LoadImage class for ImageDownload
-    from nodes import LoadImage
-    has_load_image = True
-except Exception:
-    has_load_image = False
 
 logger = main_logger
 BASE_CATEGORY = "image"
 IO_CATEGORY = "io"
 MANIPULATION_CATEGORY = "manipulation"
 NORMALIZATION = "normalization"
+VALIDATION = "validation"
 FOREGROUND = "foreground"
 BLUR_SIZE_OPT = ("INT", {"default": 90, "min": 1, "max": 255, "step": 1, })
 BLUR_SIZE_TWO_OPT = ("INT", {"default": 6, "min": 1, "max": 255, "step": 1, })
@@ -136,126 +136,281 @@ def parse_size(size_str, reference_dim):
             return 0
 
 
-if has_load_image:
-    class ImageDownload:
-        @classmethod
-        def INPUT_TYPES(cls):
-            return {
-                "required": {
-                    "base_url": ("STRING", {
-                        "default":
-                            "https://raw.githubusercontent.com/set-soft/AudioSeparation/refs/heads/main/example_workflows/",
-                        "tooltip": "The base URL where the image file is located."
-                    }),
-                    "filename": ("STRING", {
-                        "default": "audioseparation_logo.jpg",
-                        "tooltip": "The name of the image file to download (e.g., photo.jpg, art.png)."
-                    }),
-                },
-                "optional": {
-                    "image_bypass": ("IMAGE", {
-                         "tooltip": "If this image is present will be used instead of the downloaded one"
-                    }),
-                    "mask_bypass": ("MASK", {"tooltip": "If this mask is present will be used instead of the downloaded one"}),
-                    "local_name": ("STRING", {
-                        "default": "",
-                        "tooltip": "The name used locally. Leave empty to use `filename`"
-                    }),
-                    "embed_transparency": ("BOOLEAN", {
-                        "default": False,
-                        "tooltip": "Create RGBA images when they have transparency."
-                    }),
-                }
+# Define sort methods for the node input
+sort_methods = [
+    "None",
+    "Alphabetical (ASC)",
+    "Alphabetical (DESC)",
+    "Numerical (ASC)",
+    "Numerical (DESC)",
+    "Datetime (ASC)",
+    "Datetime (DESC)"
+]
+
+
+# Helper function to extract the first number from a string for sorting
+def extract_first_number(s):
+    match = re.search(r'\d+', s)
+    return int(match.group()) if match else float('inf')
+
+
+# Sorting function to be used on the lists
+def sort_by(items, base_path='.', method=None):
+    def fullpath(x): return os.path.join(base_path, x)
+
+    def get_timestamp(path):
+        try:
+            return os.path.getmtime(path)
+        except FileNotFoundError:
+            return float('-inf')
+
+    if method == "Alphabetical (ASC)":
+        return sorted(items)
+    elif method == "Alphabetical (DESC)":
+        return sorted(items, reverse=True)
+    elif method == "Numerical (ASC)":
+        return sorted(items, key=lambda x: extract_first_number(os.path.splitext(x)[0]))
+    elif method == "Numerical (DESC)":
+        return sorted(items, key=lambda x: extract_first_number(os.path.splitext(x)[0]), reverse=True)
+    elif method == "Datetime (ASC)":
+        return sorted(items, key=lambda x: get_timestamp(fullpath(x)))
+    elif method == "Datetime (DESC)":
+        return sorted(items, key=lambda x: get_timestamp(fullpath(x)), reverse=True)
+    else:
+        return items
+
+
+class ImageDownload:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "base_url": ("STRING", {
+                    "default":
+                        "https://raw.githubusercontent.com/set-soft/AudioSeparation/refs/heads/main/example_workflows/",
+                    "tooltip": "The base URL where the image file is located."
+                }),
+                "filename": ("STRING", {
+                    "default": "audioseparation_logo.jpg",
+                    "tooltip": "The name of the image file to download (e.g., photo.jpg, art.png)."
+                }),
+            },
+            "optional": {
+                "image_bypass": ("IMAGE", {
+                     "tooltip": "If this image is present will be used instead of the downloaded one"
+                }),
+                "mask_bypass": ("MASK", {"tooltip": "If this mask is present will be used instead of the downloaded one"}),
+                "local_name": ("STRING", {
+                    "default": "",
+                    "tooltip": "The name used locally. Leave empty to use `filename`"
+                }),
+                "embed_transparency": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Create RGBA images when they have transparency."
+                }),
             }
+        }
 
-        RETURN_TYPES = ("IMAGE", "MASK")
-        RETURN_NAMES = ("image", "alpha_mask")
-        FUNCTION = "load_or_download_image"
-        CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
-        DESCRIPTION = ("Downloads an image to ComfyUI's 'input' directory if it doesn't exist, then loads it using the "
-                       "built-in LoadImage logic.")
-        UNIQUE_NAME = "SET_ImageDownload"
-        DISPLAY_NAME = "Image Download and Load"
-        # This node stores a result to disk. So this IS an output node.
-        # It can be used without connecting any other node.
-        # Declaring it as output helps with the preview mechanism.
-        OUTPUT_NODE = True
+    RETURN_TYPES = ("IMAGE", "MASK")
+    RETURN_NAMES = ("image", "alpha_mask")
+    FUNCTION = "load_or_download_image"
+    CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
+    DESCRIPTION = ("Downloads an image to ComfyUI's 'input' directory if it doesn't exist, then loads it using the "
+                   "built-in LoadImage logic.")
+    UNIQUE_NAME = "SET_ImageDownload"
+    DISPLAY_NAME = "Image Download and Load"
+    # This node stores a result to disk. So this IS an output node.
+    # It can be used without connecting any other node.
+    # Declaring it as output helps with the preview mechanism.
+    OUTPUT_NODE = True
 
-        def load_or_download_image(self, base_url: str, filename: str, image_bypass: Optional[torch.Tensor] = None,
-                                   mask_bypass: Optional[torch.Tensor] = None, local_name: str = None,
-                                   embed_transparency: bool = False):
-            # If we have something at the bypass inputs use it
-            if image_bypass is not None or mask_bypass is not None:
-                if image_bypass is None:
-                    # Just a mask
-                    assert mask_bypass is not None, "This should not be possible if image_bypass is None"  # For mypy
-                    image_bypass = torch.zeros(mask_bypass.shape + (3,), dtype=torch.float32, device="cpu")
-                    logger.warning("ImageDownload: Returning an empty image")
-                elif mask_bypass is None:
-                    # This is ComfyUI behavior when we don't have transparency
-                    mask_bypass = torch.zeros((64, 64), dtype=torch.float32, device="cpu").unsqueeze(0)
-                    logger.warning("ImageDownload: Returning an empty mask")
-                return (image_bypass, mask_bypass)
+    def load_or_download_image(self, base_url: str, filename: str, image_bypass: Optional[torch.Tensor] = None,
+                               mask_bypass: Optional[torch.Tensor] = None, local_name: str = None,
+                               embed_transparency: bool = False):
+        # If we have something at the bypass inputs use it
+        if image_bypass is not None or mask_bypass is not None:
+            if image_bypass is None:
+                # Just a mask
+                assert mask_bypass is not None, "This should not be possible if image_bypass is None"  # For mypy
+                image_bypass = torch.zeros(mask_bypass.shape + (3,), dtype=torch.float32, device="cpu")
+                logger.warning("ImageDownload: Returning an empty image")
+            elif mask_bypass is None:
+                # This is ComfyUI behavior when we don't have transparency
+                mask_bypass = torch.zeros((64, 64), dtype=torch.float32, device="cpu").unsqueeze(0)
+                logger.warning("ImageDownload: Returning an empty mask")
+            return (image_bypass, mask_bypass)
 
-            save_dir = get_input_directory()
-            dest_fname = local_name or filename
-            local_filepath = os.path.join(save_dir, dest_fname)
+        save_dir = get_input_directory()
+        dest_fname = local_name or filename
+        local_filepath = os.path.join(save_dir, dest_fname)
 
-            if not os.path.exists(local_filepath):
-                logger.info(f"File '{filename}' not found locally. Attempting to download.")
+        if not os.path.exists(local_filepath):
+            logger.info(f"File '{filename}' not found locally. Attempting to download.")
 
-                if not base_url.endswith('/'):
-                    base_url += '/'
-                download_url = base_url + filename
+            if not base_url.endswith('/'):
+                base_url += '/'
+            download_url = base_url + filename
 
-                try:
-                    download_file(logger, url=download_url, save_dir=save_dir, file_name=dest_fname, kind="image")
-                except Exception as e:
-                    logger.error(f"Download failed for {download_url}: {e}", exc_info=True)
-                    raise
-            else:
-                logger.info(f"Found existing file, skipping download: '{local_filepath}'")
-
-            # --- REUSE ComfyUI's LoadImage LOGIC ---
             try:
-                # Instantiate the built-in LoadImage node
-                loader_instance = LoadImage()
-
-                # The LoadImage node's `load_image` method expects the filename as passed
-                # by the ComfyUI widget, which is just the filename. It internally
-                # resolves the path using folder_paths.
-
-                logger.debug(f"Calling built-in LoadImage.load_image() with filename: '{dest_fname}'")
-
-                # Call the method and return its result directly
-                result = loader_instance.load_image(dest_fname)
-                # Create an RGBA image if needed
-                if embed_transparency:
-                    image, mask = result
-                    # Expand the mask to (b, h, w, 1)
-                    mask = mask[..., None]
-                    # Concatenate image and mask into (b, h, w, 4)
-                    image_with_alpha = torch.cat([image, 1.0 - mask], dim=-1)
-                    result = (image_with_alpha, mask)
-                # This information is for the preview, as we are an output node and we return images
-                # they will be displayed in our node. Quite simple.
-                downloaded_file = {
-                     "images": [{
-                         "filename": dest_fname,
-                         "subfolder": "",
-                         "type": "input"  # We stored the file in the "input" folder
-                     }]
-                }
-                return {"ui": downloaded_file, "result": result}
-
+                download_file(logger, url=download_url, save_dir=save_dir, file_name=dest_fname, kind="image")
             except Exception as e:
-                logger.error(f"Failed to load image '{filename}' using built-in LoadImage node: {e}", exc_info=True)
-                # Re-raise to make the error visible in ComfyUI
-                raise IOError(f"Could not load the image file '{filename}' using the standard loader. "
-                              "It may be corrupt or in an unsupported format.") from e
-else:
-    logger.error("Failed to import ComfyUI `LoadImage`, please fill an issue here: "
-                 "https://github.com/set-soft/ComfyUI-ImageMisc/issues")
+                logger.error(f"Download failed for {download_url}: {e}", exc_info=True)
+                raise
+        else:
+            logger.info(f"Found existing file, skipping download: '{local_filepath}'")
+
+        return load_image_wrapper(dest_fname, embed_transparency, filename)
+
+
+class ImageLoad:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "file_name": ("STRING", {
+                    "tooltip": "The file name of the image to load"
+                }),
+            },
+            "optional": {
+                "embed_transparency": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Create RGBA images when they have transparency."
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "MASK")
+    RETURN_NAMES = ("image", "alpha_mask")
+    FUNCTION = "execute"
+    CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
+    DESCRIPTION = ("Loads an image from any path")
+    UNIQUE_NAME = "SET_ImageLoad"
+    DISPLAY_NAME = "Load Image from Path"
+    # This node stores a result to disk. So this IS an output node.
+    # It can be used without connecting any other node.
+    # Declaring it as output helps with the preview mechanism.
+    OUTPUT_NODE = True
+
+    def execute(self, file_name: str, embed_transparency: bool = False):
+        if not os.path.exists(file_name):
+            raise ValueError(f"File '{file_name}' not found")
+
+        return load_image_wrapper(file_name, embed_transparency)
+
+
+class ImageDataset:
+    """
+    A ComfyUI node to prepare lists of images for validation tasks,
+    such as Salient Object Detection.
+    """
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "source": ("STRING", {
+                    "default": "./dataset/im",
+                    "tooltip": "Path to the images.\nRelative to ComfyUI input"
+                }),
+                "pattern": ("STRING", {
+                    "default": ".*",
+                    "tooltip": "Python regex to match source images."
+                }),
+                "destination": ("STRING", {
+                    "default": "./result",
+                    "tooltip": "Path for the result images.\nRelative to ComfyUI output"
+                }),
+                "dest_ext": ("STRING", {
+                    "default": "png",
+                    "tooltip": "Extension for the destination images.\nEmpty means same as source"
+                }),
+            },
+            "optional": {
+                "reference": ("STRING", {
+                    "default": "./dataset/gt",
+                    "tooltip": "Path for the reference images.\nRelative to ComfyUI input"
+                }),
+                "sort_method": (sort_methods,),
+            }
+        }
+
+    RETURN_TYPES = ("STRING", "STRING", "STRING",)
+    RETURN_NAMES = ("images", "results", "references",)
+    # Tell ComfyUI that the outputs of this node are lists.
+    OUTPUT_IS_LIST = (True, True, True)
+    FUNCTION = "generate_lists"
+    CATEGORY = BASE_CATEGORY + "/" + VALIDATION
+    UNIQUE_NAME = "SET_ImageDataset"
+    DISPLAY_NAME = "List Images from Dataset"
+
+    def generate_lists(self, source, pattern, destination, dest_ext, reference=None, sort_method="None"):
+        # Define valid image extensions
+        valid_extensions = ['.jpg', '.jpeg', '.png', '.webp']
+        source_dir = Path(get_input_directory(), source)
+        dest_dir = Path(get_output_directory(), destination)
+        ref_dir = Path(get_input_directory(), reference) if reference else None
+
+        # Ensure directories exist
+        source_dir.mkdir(parents=True, exist_ok=True)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        if ref_dir:
+            ref_dir.mkdir(parents=True, exist_ok=True)
+
+        images = []
+        results = []
+        references = []
+
+        # Compile the regex pattern
+        try:
+            compiled_pattern = re.compile(pattern)
+        except re.error as e:
+            raise ValueError(f"Invalid regex pattern: {e}")
+
+        # Get all files in the source directory
+        source_files = [f for f in os.listdir(source_dir) if (source_dir / f).is_file()]
+
+        # Sort source files before processing
+        sorted_source_files = sort_by(source_files, base_path=str(source_dir), method=sort_method)
+
+        # Create a lowercase mapping of reference files for case-insensitive matching
+        ref_map = {}
+        if ref_dir:
+            for f in os.listdir(ref_dir):
+                if (ref_dir / f).is_file():
+                    ref_map[Path(f).stem.lower()] = f
+
+        for filename in sorted_source_files:
+            p_filename = Path(filename)
+            stem = p_filename.stem
+            ext = p_filename.suffix.lower()
+
+            # Filter by extension and pattern
+            if ext in valid_extensions and compiled_pattern.search(filename):
+                # Determine the destination filename and path
+                dest_extension = f".{dest_ext}" if dest_ext else ext
+                dest_filename = f"{stem}{dest_extension}"
+                dest_path = dest_dir / dest_filename
+
+                # Skip if the result file already exists
+                if dest_path.exists():
+                    continue
+
+                # Find the reference file (case-insensitive and extension-agnostic)
+                ref_filename = ""
+                if ref_dir:
+                    ref_filename_found = ref_map.get(stem.lower())
+                    if ref_filename_found:
+                        ref_filename = str(ref_dir / ref_filename_found)
+
+                # Add the absolute paths to the lists
+                images.append(str(source_dir / filename))
+                results.append(str(dest_path))
+                references.append(ref_filename if ref_dir else "")
+
+        logger.info(f"Found {len(images)} images")
+        logger.debug(images)
+
+        return (images, results, references)
 
 
 class CompositeFace:

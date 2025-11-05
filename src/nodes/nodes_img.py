@@ -25,7 +25,7 @@ from typing import Optional
 
 # We are the main source, so we use the main_logger
 from . import main_logger
-from .helpers import load_image_wrapper
+from .helpers import load_image_wrapper, save_image
 try:
     from folder_paths import get_input_directory, get_output_directory
     from comfy import model_management
@@ -286,16 +286,40 @@ class ImageLoad:
     DESCRIPTION = ("Loads an image from any path")
     UNIQUE_NAME = "SET_ImageLoad"
     DISPLAY_NAME = "Load Image from Path"
-    # This node stores a result to disk. So this IS an output node.
-    # It can be used without connecting any other node.
-    # Declaring it as output helps with the preview mechanism.
-    OUTPUT_NODE = True
 
     def execute(self, file_name: str, embed_transparency: bool = False):
         if not os.path.exists(file_name):
             raise ValueError(f"File '{file_name}' not found")
 
-        return load_image_wrapper(file_name, embed_transparency)
+        return load_image_wrapper(file_name, embed_transparency, show_preview=False)
+
+
+class ImageSave:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "image": ("IMAGE", {"tooltip": "The images to save."}),
+                "filename": ("STRING", {"default": "ComfyUI", "tooltip": "The file name for the image"})
+            },
+            "hidden": {
+                "prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"
+            },
+        }
+
+    RETURN_TYPES = ()
+    FUNCTION = "execute"
+
+    OUTPUT_NODE = True
+
+    CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
+    DESCRIPTION = ("Saves an image to an arbitrary path")
+    UNIQUE_NAME = "SET_ImageSave"
+    DISPLAY_NAME = "Save Image to Path"
+
+    def execute(self, image, filename, prompt=None, extra_pnginfo=None):
+        save_image(image, filename, prompt, extra_pnginfo)
+        return ()
 
 
 class ImageDataset:
@@ -407,6 +431,8 @@ class ImageDataset:
                 results.append(str(dest_path))
                 references.append(ref_filename if ref_dir else "")
 
+        if not len(images):
+            raise ValueError("No images to process")
         logger.info(f"Found {len(images)} images")
         logger.debug(images)
 

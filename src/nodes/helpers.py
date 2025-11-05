@@ -1,7 +1,8 @@
+import json
 import numpy as np
 import os
-from PIL import Image, ImageOps, ImageSequence
-from PIL import ImageFile, UnidentifiedImageError
+from PIL import Image, ImageOps, ImageSequence, ImageFile, UnidentifiedImageError
+from PIL.PngImagePlugin import PngInfo
 import torch
 from . import main_logger
 
@@ -80,7 +81,7 @@ class CustomLoadImage(object):
         return (output_image, output_mask)
 
 
-def load_image_wrapper(file_name, embed_transparency, disp_name=None):
+def load_image_wrapper(file_name, embed_transparency, disp_name=None, show_preview=True):
     disp_name = disp_name or file_name
 
     # --- REUSE ComfyUI's LoadImage LOGIC ---
@@ -109,6 +110,9 @@ def load_image_wrapper(file_name, embed_transparency, disp_name=None):
             # Concatenate image and mask into (b, h, w, 4)
             image_with_alpha = torch.cat([image, 1.0 - mask], dim=-1)
             result = (image_with_alpha, mask)
+        # No preview
+        if not show_preview:
+            return result
         # This information is for the preview, as we are an output node and we return images
         # they will be displayed in our node. Quite simple.
         if os.path.isabs(file_name):
@@ -132,3 +136,23 @@ def load_image_wrapper(file_name, embed_transparency, disp_name=None):
         # Re-raise to make the error visible in ComfyUI
         raise IOError(f"Could not load the image file '{disp_name}' using the standard loader. "
                       "It may be corrupt or in an unsupported format.") from e
+
+
+def save_image(images, filenames, prompt=None, extra_pnginfo=None, compress_level=4):
+    if isinstance(filenames, str):
+        filenames = [filenames]
+    B = images.shape[0]
+    if len(filenames) != B:
+        raise ValueError(f"{B} images provided but only {len(filenames)} file names")
+    for batch_number, (image, filename) in enumerate(zip(images, filenames)):
+        i = 255. * image.cpu().numpy()
+        img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
+        metadata = PngInfo()
+        if prompt is not None:
+            metadata.add_text("prompt", json.dumps(prompt))
+        if extra_pnginfo is not None:
+            for x in extra_pnginfo:
+                metadata.add_text(x, json.dumps(extra_pnginfo[x]))
+
+        logger.debug(f"Saving {image.shape[1]}x{image.shape[0]} image to {filename}")
+        img.save(filename, pnginfo=metadata, compress_level=compress_level)

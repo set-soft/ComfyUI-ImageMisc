@@ -12,6 +12,7 @@ import numpy as np
 import os
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont  # Import the Python Imaging Library
+import random
 import re
 from seconohe.apply_mask import apply_mask
 from seconohe.foreground_estimation.affce import affce
@@ -145,7 +146,8 @@ sort_methods = [
     "Numerical (ASC)",
     "Numerical (DESC)",
     "Datetime (ASC)",
-    "Datetime (DESC)"
+    "Datetime (DESC)",
+    "Random",
 ]
 
 
@@ -156,7 +158,7 @@ def extract_first_number(s):
 
 
 # Sorting function to be used on the lists
-def sort_by(items, base_path='.', method=None):
+def sort_by(items, base_path='.', method=None, random_seed=1):
     def fullpath(x): return os.path.join(base_path, x)
 
     def get_timestamp(path):
@@ -177,6 +179,10 @@ def sort_by(items, base_path='.', method=None):
         return sorted(items, key=lambda x: get_timestamp(fullpath(x)))
     elif method == "Datetime (DESC)":
         return sorted(items, key=lambda x: get_timestamp(fullpath(x)), reverse=True)
+    elif method == "Random":
+        random.seed(random_seed)
+        random.shuffle(items)
+        return items
     else:
         return items
 
@@ -378,6 +384,12 @@ class ImageDataset:
                     "max": MAX_FILES,
                     "tooltip": "Keeps only the first of every n files and discard the rest"
                 }),
+                "random_seed": ("INT", {
+                    "default": 1,
+                    "min": 0,
+                    "max": MAX_FILES,
+                    "tooltip": "Random seed used for the random sorting"
+                }),
             }
         }
 
@@ -396,14 +408,14 @@ class ImageDataset:
 
     @classmethod
     def IS_CHANGED(cls, source, pattern, destination, dest_ext, reference=None, sort_method="None",
-                   image_load_cap=1, skip_first_images=0, select_every_nth=1):
+                   image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1):
         # Here we return how many files remains to be processed
         # As we progress the number changes and the node is evaluated again
         # When no files are left we catch the exception and return 0, so the node will be actually evaluated
         # But this time will raise the exception indicating the process finished.
         try:
             images, _, _ = cls.generate_lists(source, pattern, destination, dest_ext, reference, sort_method,
-                                              MAX_FILES, skip_first_images, select_every_nth)
+                                              MAX_FILES, skip_first_images, select_every_nth, random_seed)
         except ValueError:
             logger.debug(f"IS_CHANGED -> 0 ValueError")
             return 0
@@ -411,14 +423,14 @@ class ImageDataset:
         return len(images)
 
     def execute(self, source, pattern, destination, dest_ext, reference=None, sort_method="None",
-                image_load_cap=1, skip_first_images=0, select_every_nth=1):
+                image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1):
         # Here self isn't really needed, our state is the filesystem
         return self.generate_lists(source, pattern, destination, dest_ext, reference, sort_method,
-                                   image_load_cap, skip_first_images, select_every_nth)
+                                   image_load_cap, skip_first_images, select_every_nth, random_seed)
 
     @classmethod
     def generate_lists(cls, source, pattern, destination, dest_ext, reference=None, sort_method="None",
-                       image_load_cap=1, skip_first_images=0, select_every_nth=1):
+                       image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1):
         source_dir = Path(get_input_directory(), source)
         dest_dir = Path(get_output_directory(), destination)
         ref_dir = Path(get_input_directory(), reference) if reference else None
@@ -454,7 +466,7 @@ class ImageDataset:
         logger.info(f"{n_files} images after filtering")
 
         # Sort source files before processing
-        source_files = sort_by(source_files, base_path=str(source_dir), method=sort_method)
+        source_files = sort_by(source_files, base_path=str(source_dir), method=sort_method, random_seed=random_seed)
 
         # Aplly range
         if skip_first_images or select_every_nth != 1:

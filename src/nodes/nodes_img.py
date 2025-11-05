@@ -307,7 +307,7 @@ class ImageSave:
         return {
             "required": {
                 "image": ("IMAGE", {"tooltip": "The images to save."}),
-                "filename": ("STRING", {"default": "ComfyUI", "tooltip": "The file name for the image"})
+                "filename": ("STRING", {"default": "", "tooltip": "The file name for the image"})
             },
             "hidden": {
                 "prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"
@@ -326,6 +326,31 @@ class ImageSave:
 
     def execute(self, image, filename, prompt=None, extra_pnginfo=None):
         save_image(image, filename, prompt, extra_pnginfo)
+        return ()
+
+
+class MaskSave:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "mask": ("MASK", {"tooltip": "The mask to save."}),
+                "filename": ("STRING", {"default": "", "tooltip": "The file name for the image"})
+            },
+        }
+
+    RETURN_TYPES = ()
+    FUNCTION = "execute"
+
+    OUTPUT_NODE = True
+
+    CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
+    DESCRIPTION = ("Saves a mask to an arbitrary path")
+    UNIQUE_NAME = "SET_MaskSave"
+    DISPLAY_NAME = "Save Mask to Path"
+
+    def execute(self, mask, filename):
+        save_image(mask, filename)
         return ()
 
 

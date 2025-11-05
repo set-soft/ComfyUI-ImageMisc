@@ -140,6 +140,8 @@ def load_image_wrapper(file_name, embed_transparency, disp_name=None, show_previ
 
 def save_image(images, filenames, prompt=None, extra_pnginfo=None, compress_level=4):
     if isinstance(filenames, str):
+        if not filenames:
+            raise ValueError("You must provide a file name")
         filenames = [filenames]
     B = images.shape[0]
     if len(filenames) != B:

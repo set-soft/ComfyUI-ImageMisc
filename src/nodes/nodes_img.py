@@ -95,6 +95,7 @@ NORM_PARAM = ("FLOAT", {
                 "max": 1.0,
                 "step": 0.1,
                 "display": "number"})
+MAX_FILES = 0xffffffffffffffff
 # A dictionary to cache loaded fonts
 font_cache = {}
 
@@ -327,6 +328,8 @@ class ImageDataset:
     A ComfyUI node to prepare lists of images for validation tasks,
     such as Salient Object Detection.
     """
+    # Define valid image extensions
+    valid_extensions = ['.jpg', '.jpeg', '.png', '.webp']
 
     @classmethod
     def INPUT_TYPES(s):
@@ -355,6 +358,26 @@ class ImageDataset:
                     "tooltip": "Path for the reference images.\nRelative to ComfyUI input"
                 }),
                 "sort_method": (sort_methods,),
+                "image_load_cap": ("INT", {
+                    "default": 1,
+                    "min": 0,
+                    "max": MAX_FILES,
+                    "tooltip": "How many files to load at once\n"
+                               "0 means infinite\n"
+                               "Use 1 and queue N runs for low memory usage"
+                }),
+                "skip_first_images": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": MAX_FILES,
+                    "tooltip": "How many file we will skip before starting to process"
+                }),
+                "select_every_nth": ("INT", {
+                    "default": 1,
+                    "min": 1,
+                    "max": MAX_FILES,
+                    "tooltip": "Keeps only the first of every n files and discard the rest"
+                }),
             }
         }
 
@@ -362,14 +385,40 @@ class ImageDataset:
     RETURN_NAMES = ("images", "results", "references",)
     # Tell ComfyUI that the outputs of this node are lists.
     OUTPUT_IS_LIST = (True, True, True)
-    FUNCTION = "generate_lists"
+    FUNCTION = "execute"
     CATEGORY = BASE_CATEGORY + "/" + VALIDATION
     UNIQUE_NAME = "SET_ImageDataset"
     DISPLAY_NAME = "List Images from Dataset"
 
-    def generate_lists(self, source, pattern, destination, dest_ext, reference=None, sort_method="None"):
-        # Define valid image extensions
-        valid_extensions = ['.jpg', '.jpeg', '.png', '.webp']
+    @classmethod
+    def has_valid_extension(cls, filename):
+        return Path(filename).suffix.lower() in cls.valid_extensions
+
+    @classmethod
+    def IS_CHANGED(cls, source, pattern, destination, dest_ext, reference=None, sort_method="None",
+                   image_load_cap=1, skip_first_images=0, select_every_nth=1):
+        # Here we return how many files remains to be processed
+        # As we progress the number changes and the node is evaluated again
+        # When no files are left we catch the exception and return 0, so the node will be actually evaluated
+        # But this time will raise the exception indicating the process finished.
+        try:
+            images, _, _ = cls.generate_lists(source, pattern, destination, dest_ext, reference, sort_method,
+                                              MAX_FILES, skip_first_images, select_every_nth)
+        except ValueError:
+            logger.debug(f"IS_CHANGED -> 0 ValueError")
+            return 0
+        logger.debug(f"IS_CHANGED -> {len(images)}")
+        return len(images)
+
+    def execute(self, source, pattern, destination, dest_ext, reference=None, sort_method="None",
+                image_load_cap=1, skip_first_images=0, select_every_nth=1):
+        # Here self isn't really needed, our state is the filesystem
+        return self.generate_lists(source, pattern, destination, dest_ext, reference, sort_method,
+                                   image_load_cap, skip_first_images, select_every_nth)
+
+    @classmethod
+    def generate_lists(cls, source, pattern, destination, dest_ext, reference=None, sort_method="None",
+                       image_load_cap=1, skip_first_images=0, select_every_nth=1):
         source_dir = Path(get_input_directory(), source)
         dest_dir = Path(get_output_directory(), destination)
         ref_dir = Path(get_input_directory(), reference) if reference else None
@@ -392,9 +441,30 @@ class ImageDataset:
 
         # Get all files in the source directory
         source_files = [f for f in os.listdir(source_dir) if (source_dir / f).is_file()]
+        n_files = len(source_files)
+        if not n_files:
+            raise ValueError("No files to process")
+        logger.info(f"Found {n_files} files in {source_dir}")
+
+        # Filter the images
+        source_files = [f for f in source_files if cls.has_valid_extension(f) and compiled_pattern.search(f)]
+        n_files = len(source_files)
+        if not n_files:
+            raise ValueError("No images to process after applying filters")
+        logger.info(f"{n_files} images after filtering")
 
         # Sort source files before processing
-        sorted_source_files = sort_by(source_files, base_path=str(source_dir), method=sort_method)
+        source_files = sort_by(source_files, base_path=str(source_dir), method=sort_method)
+
+        # Aplly range
+        if skip_first_images or select_every_nth != 1:
+            if skip_first_images >= n_files:
+                raise ValueError(f"Trying to skip {skip_first_images} images, but only {n_files} found")
+            source_files = [source_files[i] for i in range(skip_first_images, n_files, select_every_nth)]
+        n_files = len(source_files)
+        logger.info(f"{n_files} in the processing range")
+        if not image_load_cap:
+            image_load_cap = n_files
 
         # Create a lowercase mapping of reference files for case-insensitive matching
         ref_map = {}
@@ -403,37 +473,38 @@ class ImageDataset:
                 if (ref_dir / f).is_file():
                     ref_map[Path(f).stem.lower()] = f
 
-        for filename in sorted_source_files:
+        for filename in source_files:
             p_filename = Path(filename)
             stem = p_filename.stem
             ext = p_filename.suffix.lower()
 
-            # Filter by extension and pattern
-            if ext in valid_extensions and compiled_pattern.search(filename):
-                # Determine the destination filename and path
-                dest_extension = f".{dest_ext}" if dest_ext else ext
-                dest_filename = f"{stem}{dest_extension}"
-                dest_path = dest_dir / dest_filename
+            # Determine the destination filename and path
+            dest_extension = f".{dest_ext}" if dest_ext else ext
+            dest_filename = f"{stem}{dest_extension}"
+            dest_path = dest_dir / dest_filename
 
-                # Skip if the result file already exists
-                if dest_path.exists():
-                    continue
+            # Skip if the result file already exists
+            if dest_path.exists():
+                continue
 
-                # Find the reference file (case-insensitive and extension-agnostic)
-                ref_filename = ""
-                if ref_dir:
-                    ref_filename_found = ref_map.get(stem.lower())
-                    if ref_filename_found:
-                        ref_filename = str(ref_dir / ref_filename_found)
+            # Find the reference file (case-insensitive and extension-agnostic)
+            ref_filename = ""
+            if ref_dir:
+                ref_filename_found = ref_map.get(stem.lower())
+                if ref_filename_found:
+                    ref_filename = str(ref_dir / ref_filename_found)
 
-                # Add the absolute paths to the lists
-                images.append(str(source_dir / filename))
-                results.append(str(dest_path))
-                references.append(ref_filename if ref_dir else "")
+            # Add the absolute paths to the lists
+            images.append(str(source_dir / filename))
+            results.append(str(dest_path))
+            references.append(ref_filename if ref_dir else "")
+
+            if len(images) >= image_load_cap:
+                break
 
         if not len(images):
-            raise ValueError("No images to process")
-        logger.info(f"Found {len(images)} images")
+            raise ValueError("Finished processing images")
+        logger.info(f"Found {len(images)} images to process")
         logger.debug(images)
 
         return (images, results, references)

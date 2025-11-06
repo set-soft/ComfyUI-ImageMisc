@@ -591,6 +591,73 @@ class ImageDataset:
         return (images, results, references)
 
 
+class MaskDifference:
+    """
+    A ComfyUI node to compare two MASKs (grayscale images).
+    The output is a color IMAGE visualizing the difference.
+
+    Modes:
+    1. Simple (Red/Green): Shows added intensity in green and removed in red.
+    2. Coincidence (White): Shows additions in green, removals in red, and
+       shared intensity in white/grayscale.
+    """
+
+    MODES = ["Simple (Red/Green)", "Coincidence (White)"]
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "result": ("MASK",),
+                "reference": ("MASK",),
+                "mode": (s.MODES,),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "generate_diff"
+    CATEGORY = BASE_CATEGORY + "/" + "Compare"
+    UNIQUE_NAME = "SET_MaskDifference"
+    DISPLAY_NAME = "Mask Difference"
+
+    def generate_diff(self, result: torch.Tensor, reference: torch.Tensor, mode: str):
+        # Ensure batch sizes match by taking the smaller of the two
+        batch_size = min(result.shape[0], reference.shape[0])
+        m1 = reference[:batch_size]
+        m2 = result[:batch_size]
+
+        # Calculate the core difference
+        difference = m2 - m1
+
+        # --- Conditional logic based on the selected mode ---
+        if mode == "Simple (Red/Green)":
+            # Red channel for removed intensity
+            red_channel = torch.clamp(-difference, min=0)
+            # Green channel for added intensity
+            green_channel = torch.clamp(difference, min=0)
+            # Blue channel is all zeros
+            blue_channel = torch.zeros_like(red_channel)
+
+        elif mode == "Coincidence (White)":
+            # Find the shared intensity
+            coincidence = torch.min(m1, m2)
+            # Red channel = removed intensity + shared intensity
+            red_channel = torch.clamp(-difference, min=0) + coincidence
+            # Green channel = added intensity + shared intensity
+            green_channel = torch.clamp(difference, min=0) + coincidence
+            # Blue channel = shared intensity
+            blue_channel = coincidence
+
+        # Stack the R, G, B channels along the last dimension to create
+        # the (B, H, W, C) format required for a ComfyUI IMAGE.
+        diff_image_bhwc = torch.stack([red_channel, green_channel, blue_channel], dim=-1)
+
+        # Clamp final image tensor to the valid [0.0, 1.0] range
+        diff_image_bhwc = torch.clamp(diff_image_bhwc, 0.0, 1.0)
+
+        return (diff_image_bhwc,)
+
+
 class CompositeFace:
     """
     A ComfyUI node to composite (paste) animated face crops back onto reference images.

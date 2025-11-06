@@ -770,16 +770,36 @@ class SaliencyEvaluationMetrics:
                 "prediction": ("MASK",),
                 "ground_truth": ("MASK",),
             },
+            "optional": {
+                "mae_enable": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Compute the MAE"}),
+                "max_f_mes_enable": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Compute the Max_F-measure"}),
+                "s_mes_enable": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Compute the S-measure"}),
+                "e_mes_enable": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Compute the E-measure"}),
+                "wf_mes_enable": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Compute the Weighted F-measure"}),
+            },
         }
 
-    RETURN_TYPES = ("FLOAT", "FLOAT", "FLOAT", "FLOAT", "FLOAT")
-    RETURN_NAMES = ("MAE", "Max_F-measure", "S-measure", "E-measure", "Weighted_F-measure")
+    RETURN_TYPES = ("DICT", "FLOAT", "FLOAT", "FLOAT", "FLOAT", "FLOAT")
+    RETURN_NAMES = ("all", "MAE", "Max_F-measure", "S-measure", "E-measure", "Weighted_F-measure")
+    OUTPUT_IS_LIST = (True, False, False, False, False, False)
     FUNCTION = "evaluate"
     CATEGORY = BASE_CATEGORY + "/" + "Analysis"
     UNIQUE_NAME = "SET_SaliencyEvaluationMetrics"
     DISPLAY_NAME = "Saliency Evaluation Metrics"
 
-    def evaluate(self, prediction: torch.Tensor, ground_truth: torch.Tensor):
+    def evaluate(self, prediction: torch.Tensor, ground_truth: torch.Tensor, mae_enable: bool = True,
+                 max_f_mes_enable: bool = True, s_mes_enable: bool = True, e_mes_enable: bool = True,
+                 wf_mes_enable: bool = True):
         # Ensure tensors are on the same device and float type
         device = get_default_comfy_device()
         inputs_are_copies = get_canonical_device(prediction.device) != device
@@ -799,54 +819,69 @@ class SaliencyEvaluationMetrics:
         mae_total, f_measure_max_total, s_measure_total, e_measure_total, weighted_f_total = 0, 0, 0, 0, 0
         eps = 1e-6
 
+        all = []
         for i in range(batch_size):
             pred_i = pred[i]
             gt_i = gt[i]
+            res = {}
 
             # 1. Mean Absolute Error (MAE)
-            mae = torch.mean(torch.abs(pred_i - gt_i))
-            logger.debug(f"MAE: {mae}")
-            mae_total += mae
+            if mae_enable:
+                mae = torch.mean(torch.abs(pred_i - gt_i))
+                logger.debug(f"MAE: {mae}")
+                mae_total += mae
+                res['mae'] = mae
 
             # --- Metrics requiring binary ground truth ---
-            gt_binary = (gt_i >= 0.5).float()
+            if max_f_mes_enable or s_mes_enable or e_mes_enable or wf_mes_enable:
+                gt_binary = (gt_i >= 0.5).float()
 
             # 2. Max F-measure
-            f_max = 0.0
-            for threshold in torch.linspace(0, 1, 256, device=device):
-                pred_binary = (pred_i >= threshold).float()
+            if max_f_mes_enable:
+                f_max = 0.0
+                for threshold in torch.linspace(0, 1, 256, device=device):
+                    pred_binary = (pred_i >= threshold).float()
 
-                tp = (pred_binary * gt_binary).sum()
+                    tp = (pred_binary * gt_binary).sum()
 
-                if tp == 0:
-                    continue
+                    if tp == 0:
+                        continue
 
-                precision = tp / (pred_binary.sum() + eps)
-                recall = tp / (gt_binary.sum() + eps)
+                    precision = tp / (pred_binary.sum() + eps)
+                    recall = tp / (gt_binary.sum() + eps)
 
-                # Using beta^2 = 0.3 as is standard.
-                beta2 = 0.3
-                f_beta = (1 + beta2) * precision * recall / (beta2 * precision + recall + eps)
+                    # Using beta^2 = 0.3 as is standard.
+                    beta2 = 0.3
+                    f_beta = (1 + beta2) * precision * recall / (beta2 * precision + recall + eps)
 
-                if f_beta > f_max:
-                    f_max = f_beta
-            f_measure_max_total += f_max
-            logger.debug(f"F_max: {f_max}")
+                    if f_beta > f_max:
+                        f_max = f_beta
+                f_measure_max_total += f_max
+                logger.debug(f"F_max: {f_max}")
+                res['max_f_mes'] = f_max
 
             # 3. S-measure
-            s_measure = _get_s_measure(pred_i, gt_binary)
-            s_measure_total += s_measure
-            logger.debug(f"S: {s_measure}")
+            if s_mes_enable:
+                s_measure = _get_s_measure(pred_i, gt_binary)
+                s_measure_total += s_measure
+                logger.debug(f"S: {s_measure}")
+                res['s_mes'] = s_measure
 
             # 4. E-measure
-            e_measure = _get_e_measure(pred_i, gt_binary)
-            e_measure_total += e_measure
-            logger.debug(f"E: {e_measure}")
+            if e_mes_enable:
+                e_measure = _get_e_measure(pred_i, gt_binary)
+                e_measure_total += e_measure
+                logger.debug(f"E: {e_measure}")
+                res['e_mes'] = e_measure
 
             # 5. Weighted F-measure
-            wf = _get_weighted_f_measure(pred_i, gt_binary)
-            weighted_f_total += wf
-            logger.debug(f"wF: {wf}")
+            if wf_mes_enable:
+                wf = _get_weighted_f_measure(pred_i, gt_binary)
+                weighted_f_total += wf
+                logger.debug(f"wF: {wf}")
+                res['wf_mes'] = wf
+
+            all.append(res)
 
         # --- Average metrics over the batch ---
         mae_avg = mae_total.item() / batch_size
@@ -855,7 +890,7 @@ class SaliencyEvaluationMetrics:
         e_measure_avg = e_measure_total.item() / batch_size
         weighted_f_avg = weighted_f_total.item() / batch_size
 
-        return (mae_avg, f_measure_avg, s_measure_avg, e_measure_avg, weighted_f_avg)
+        return (all, mae_avg, f_measure_avg, s_measure_avg, e_measure_avg, weighted_f_avg)
 
 
 class CompositeFace:

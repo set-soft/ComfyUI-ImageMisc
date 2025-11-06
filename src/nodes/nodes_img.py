@@ -673,8 +673,7 @@ def _get_s_measure(pred, gt):
         x = pred.mean()
         q = x
     else:
-        gt[gt >= 0.5] = 1
-        gt[gt < 0.5] = 0
+        # gt is assumed to be binary
         q = alpha * _object(pred, gt) + (1 - alpha) * _region(pred, gt)
         if q < 0:
             q = torch.tensor([0.0], device=pred.device)
@@ -724,9 +723,7 @@ def _region(pred, gt):
 
 
 def _get_e_measure(pred, gt):
-    gt[gt >= 0.5] = 1
-    gt[gt < 0.5] = 0
-
+    # gt is assumed to be binary
     pred = (pred - pred.mean()) / (pred.std() + 1e-8)
     gt = (gt - gt.mean()) / (gt.std() + 1e-8)
 
@@ -738,8 +735,7 @@ def _get_e_measure(pred, gt):
 
 
 def _get_weighted_f_measure(pred, gt):
-    gt[gt >= 0.5] = 1
-    gt[gt < 0.5] = 0
+    # gt is assumed to be binary
 
     # Implementation based on https://github.com/wenguanwang/SODsurvey/
     # Generates a weight map that gives more importance to pixels near the center.
@@ -838,17 +834,17 @@ class SaliencyEvaluationMetrics:
             logger.debug(f"F_max: {f_max}")
 
             # 3. S-measure
-            s_measure = _get_s_measure(pred_i, gt_binary.clone())
+            s_measure = _get_s_measure(pred_i, gt_binary)
             s_measure_total += s_measure
             logger.debug(f"S: {s_measure}")
 
             # 4. E-measure
-            e_measure = _get_e_measure(pred_i, gt_binary.clone())
+            e_measure = _get_e_measure(pred_i, gt_binary)
             e_measure_total += e_measure
             logger.debug(f"E: {e_measure}")
 
             # 5. Weighted F-measure
-            wf = _get_weighted_f_measure(pred_i, gt_binary.clone())
+            wf = _get_weighted_f_measure(pred_i, gt_binary)
             weighted_f_total += wf
             logger.debug(f"wF: {wf}")
 

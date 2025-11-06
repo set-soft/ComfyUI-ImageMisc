@@ -472,7 +472,7 @@ class ImageDataset:
         # But this time will raise the exception indicating the process finished.
         try:
             images, _, _ = cls.generate_lists(source, pattern, destination, dest_ext, reference, sort_method,
-                                              MAX_FILES, skip_first_images, select_every_nth, random_seed)
+                                              MAX_FILES, skip_first_images, select_every_nth, random_seed, show_info=False)
         except ValueError:
             logger.debug("No more images, we got ValueError (IS_CHANGED -> 0 )")
             return 0
@@ -487,7 +487,7 @@ class ImageDataset:
 
     @classmethod
     def generate_lists(cls, source, pattern, destination, dest_ext, reference=None, sort_method="None",
-                       image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1):
+                       image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1, show_info=True):
         source_dir = Path(get_input_directory(), source)
         dest_dir = Path(get_output_directory(), destination)
         ref_dir = Path(get_input_directory(), reference) if reference else None
@@ -513,14 +513,14 @@ class ImageDataset:
         n_files = len(source_files)
         if not n_files:
             raise ValueError("No files to process")
-        logger.info(f"Found {n_files} files in {source_dir}")
+        logger.debug(f"Found {n_files} files in {source_dir}")
 
         # Filter the images
         source_files = [f for f in source_files if cls.has_valid_extension(f) and compiled_pattern.search(f)]
         n_files = len(source_files)
         if not n_files:
             raise ValueError("No images to process after applying filters")
-        logger.info(f"{n_files} images after filtering")
+        logger.debug(f"{n_files} images after filtering")
 
         # Sort source files before processing
         source_files = sort_by(source_files, base_path=str(source_dir), method=sort_method, random_seed=random_seed)
@@ -531,7 +531,7 @@ class ImageDataset:
                 raise ValueError(f"Trying to skip {skip_first_images} images, but only {n_files} found")
             source_files = [source_files[i] for i in range(skip_first_images, n_files, select_every_nth)]
         n_files = len(source_files)
-        logger.info(f"{n_files} in the processing range")
+        logger.debug(f"{n_files} in the processing range")
         if not image_load_cap:
             image_load_cap = n_files
 
@@ -542,7 +542,8 @@ class ImageDataset:
                 if (ref_dir / f).is_file():
                     ref_map[Path(f).stem.lower()] = f
 
-        for filename in source_files:
+        remain = 0
+        for index, filename in enumerate(source_files):
             p_filename = Path(filename)
             stem = p_filename.stem
             ext = p_filename.suffix.lower()
@@ -569,12 +570,23 @@ class ImageDataset:
             references.append(ref_filename if ref_dir else "")
 
             if len(images) >= image_load_cap:
+                remain = len(source_files) - index - 1
                 break
 
         if not len(images):
             raise ValueError("Finished processing images")
-        logger.info(f"Found {len(images)} images to process")
-        logger.debug(images)
+        if show_info:
+            cur_len = len(images)
+            total = n_files
+            last = total-remain
+            first = last-cur_len+1
+
+            if cur_len > 1:
+                logger.info(f"Listing {cur_len} images out of {n_files} [{first} to {last}] "
+                            f"[{(first-1)/total:.0%}-{(last)/total:.0%}] left: {remain}")
+            else:
+                logger.info(f"Image {first}/{n_files} [{(first-1)/total:.0%}-{(last)/total:.0%}] left: {remain}")
+            logger.debug(images)
 
         return (images, results, references)
 

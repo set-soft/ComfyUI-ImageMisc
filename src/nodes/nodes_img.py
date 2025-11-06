@@ -19,6 +19,8 @@ from seconohe.foreground_estimation.affce import affce
 from seconohe.foreground_estimation.fmlfe import fmlfe, IMPL_PRIORITY
 from seconohe.downloader import download_file
 from seconohe.color import color_to_rgb_float, color_to_rgb_uint8
+from seconohe.torch import get_default_comfy_device, get_canonical_device
+from seconohe.tensor import batched_min_max_norm
 import torch
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
@@ -29,7 +31,6 @@ from . import main_logger
 from .helpers import load_image_wrapper, load_images_wrapper, save_image, upscale, upscale_comfy
 try:
     from folder_paths import get_input_directory, get_output_directory
-    from comfy import model_management
 except ModuleNotFoundError:
     # No ComfyUI, this is a test environment
     def get_input_directory():
@@ -658,6 +659,209 @@ class MaskDifference:
         return (diff_image_bhwc,)
 
 
+# --- Helper functions for advanced metrics ---
+# These implementations are PyTorch adaptations of common saliency evaluation libraries.
+# Credit to the original authors of S-measure, E-measure, and Weighted F-measure.
+
+def _get_s_measure(pred, gt):
+    alpha = 0.5
+    y = gt.mean()
+    if y == 0:
+        x = pred.mean()
+        q = 1.0 - x
+    elif y == 1:
+        x = pred.mean()
+        q = x
+    else:
+        gt[gt >= 0.5] = 1
+        gt[gt < 0.5] = 0
+        q = alpha * _object(pred, gt) + (1 - alpha) * _region(pred, gt)
+        if q < 0:
+            q = torch.tensor([0.0], device=pred.device)
+    return q
+
+
+def _object(pred, gt):
+    fg = torch.where(gt == 0, torch.zeros_like(pred), pred)
+    bg = torch.where(gt == 1, torch.zeros_like(pred), 1 - pred)
+    o_fg = _object_calc(fg, gt)
+    o_bg = _object_calc(bg, 1 - gt)
+    u = gt.mean()
+    q = u * o_fg + (1 - u) * o_bg
+    return q
+
+
+def _object_calc(pred, gt):
+    x = pred.mean()
+    # sigma_x = pred.std()
+    score = 2.0 * x / (x**2 + 1.0 + 1e-8)
+    return score
+
+
+def _region(pred, gt):
+    [y, x] = torch.where(gt == 1)
+    if len(y) == 0 or len(x) == 0:
+        return torch.tensor(0.0)
+
+    y_bar, x_bar = y.float().mean(), x.float().mean()
+
+    gt_w = torch.where(gt == 0, gt.float(), 1-gt.float())
+    gt_w[y_bar.long(), x_bar.long()] = 1
+
+    gt_w_sum = gt_w.sum()
+    if gt_w_sum > 0:
+        gt_w = gt_w / gt_w_sum
+    else:  # Handle case where sum is zero
+        gt_w.fill_(1.0 / (gt.shape[0] * gt.shape[1]))
+
+    parts = gt_w.unique()
+
+    if len(parts) == 1:
+        return (1-pred).mean() if parts[0] == 0 else pred.mean()
+
+    w_pred = pred * gt_w
+    return w_pred.sum()
+
+
+def _get_e_measure(pred, gt):
+    gt[gt >= 0.5] = 1
+    gt[gt < 0.5] = 0
+
+    pred = (pred - pred.mean()) / (pred.std() + 1e-8)
+    gt = (gt - gt.mean()) / (gt.std() + 1e-8)
+
+    align_matrix = 2 * gt * pred / (gt * gt + pred * pred + 1e-8)
+    enhanced = (align_matrix + 1)**2 / 4
+
+    score = torch.mean(enhanced)
+    return score
+
+
+def _get_weighted_f_measure(pred, gt):
+    gt[gt >= 0.5] = 1
+    gt[gt < 0.5] = 0
+
+    # Implementation based on https://github.com/wenguanwang/SODsurvey/
+    # Generates a weight map that gives more importance to pixels near the center.
+    center_w = torch.ones_like(gt)
+    h, w = gt.shape
+    y, x = torch.meshgrid(torch.arange(h, device=gt.device), torch.arange(w, device=gt.device), indexing="ij")
+
+    center_w = 1 - 0.5 * (torch.abs(y - (h-1)/2) / ((h-1)/2) + torch.abs(x - (w-1)/2) / ((w-1)/2))
+
+    tp = center_w * (pred * gt)
+    fp = center_w * (pred * (1-gt))
+    fn = center_w * ((1-pred) * gt)
+
+    # Add a small epsilon to avoid division by zero
+    eps = 1e-6
+
+    prec = tp.sum() / (tp.sum() + fp.sum() + eps)
+    recall = tp.sum() / (tp.sum() + fn.sum() + eps)
+
+    # Using beta^2 = 0.3 as is standard.
+    beta2 = 0.3
+    f_beta = (1 + beta2) * prec * recall / (beta2 * prec + recall + eps)
+
+    return f_beta
+
+
+class SaliencyEvaluationMetrics:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "prediction": ("MASK",),
+                "ground_truth": ("MASK",),
+            },
+        }
+
+    RETURN_TYPES = ("FLOAT", "FLOAT", "FLOAT", "FLOAT", "FLOAT")
+    RETURN_NAMES = ("MAE", "Max_F-measure", "S-measure", "E-measure", "Weighted_F-measure")
+    FUNCTION = "evaluate"
+    CATEGORY = BASE_CATEGORY + "/" + "Analysis"
+    UNIQUE_NAME = "SET_SaliencyEvaluationMetrics"
+    DISPLAY_NAME = "Saliency Evaluation Metrics"
+
+    def evaluate(self, prediction: torch.Tensor, ground_truth: torch.Tensor):
+        # Ensure tensors are on the same device and float type
+        device = get_default_comfy_device()
+        inputs_are_copies = get_canonical_device(prediction.device) != device
+        gt = ground_truth.to(device)
+        pred = prediction.to(device)
+
+        # Match batch sizes
+        batch_size = min(pred.shape[0], gt.shape[0])
+        pred = pred[:batch_size]
+        gt = gt[:batch_size]
+
+        # Ensure masks are normalized to [0, 1] range
+        pred = batched_min_max_norm(pred, in_place=inputs_are_copies)
+        gt = batched_min_max_norm(gt, in_place=inputs_are_copies)
+
+        # --- Initialize accumulators for metrics ---
+        mae_total, f_measure_max_total, s_measure_total, e_measure_total, weighted_f_total = 0, 0, 0, 0, 0
+        eps = 1e-6
+
+        for i in range(batch_size):
+            pred_i = pred[i]
+            gt_i = gt[i]
+
+            # 1. Mean Absolute Error (MAE)
+            mae = torch.mean(torch.abs(pred_i - gt_i))
+            logger.debug(f"MAE: {mae}")
+            mae_total += mae
+
+            # --- Metrics requiring binary ground truth ---
+            gt_binary = (gt_i >= 0.5).float()
+
+            # 2. Max F-measure
+            f_max = 0.0
+            for threshold in torch.linspace(0, 1, 256, device=device):
+                pred_binary = (pred_i >= threshold).float()
+
+                tp = (pred_binary * gt_binary).sum()
+
+                if tp == 0:
+                    continue
+
+                precision = tp / (pred_binary.sum() + eps)
+                recall = tp / (gt_binary.sum() + eps)
+
+                # Using beta^2 = 0.3 as is standard.
+                beta2 = 0.3
+                f_beta = (1 + beta2) * precision * recall / (beta2 * precision + recall + eps)
+
+                if f_beta > f_max:
+                    f_max = f_beta
+            f_measure_max_total += f_max
+            logger.debug(f"F_max: {f_max}")
+
+            # 3. S-measure
+            s_measure = _get_s_measure(pred_i, gt_binary.clone())
+            s_measure_total += s_measure
+            logger.debug(f"S: {s_measure}")
+
+            # 4. E-measure
+            e_measure = _get_e_measure(pred_i, gt_binary.clone())
+            e_measure_total += e_measure
+            logger.debug(f"E: {e_measure}")
+
+            # 5. Weighted F-measure
+            wf = _get_weighted_f_measure(pred_i, gt_binary.clone())
+            weighted_f_total += wf
+            logger.debug(f"wF: {wf}")
+
+        # --- Average metrics over the batch ---
+        mae_avg = mae_total.item() / batch_size
+        f_measure_avg = f_measure_max_total.item() / batch_size
+        s_measure_avg = s_measure_total.item() / batch_size
+        e_measure_avg = e_measure_total.item() / batch_size
+        weighted_f_avg = weighted_f_total.item() / batch_size
+
+        return (mae_avg, f_measure_avg, s_measure_avg, e_measure_avg, weighted_f_avg)
+
+
 class CompositeFace:
     """
     A ComfyUI node to composite (paste) animated face crops back onto reference images.
@@ -980,7 +1184,7 @@ class ApplyMaskAFFCE:
     DISPLAY_NAME = "Apply Mask using AFFCE"
 
     def get_foreground(self, images, masks, blur_size=91, blur_size_two=7, fill_color=False, color=None, batched=True):
-        out_images = apply_mask(logger, images, masks, model_management.get_torch_device(), blur_size, blur_size_two,
+        out_images = apply_mask(logger, images, masks, get_default_comfy_device(), blur_size, blur_size_two,
                                 fill_color, color, batched)
         return out_images.cpu(), masks.cpu()
 
@@ -1013,7 +1217,7 @@ class AFFCE:
     DISPLAY_NAME = "Estimate foreground (AFFCE)"
 
     def get_foreground(self, images, masks, blur_size=91, blur_size_two=7, batched=True):
-        device = model_management.get_torch_device()
+        device = get_default_comfy_device()
         images_on_device = images.to(device)
         masks_on_device = masks.to(device)
 
@@ -1459,7 +1663,7 @@ class ImageResize:
         if device == "gpu":
             if upscale_method == "lanczos":
                 raise Exception("Lanczos is not supported on the GPU")
-            device = model_management.get_torch_device()
+            device = get_default_comfy_device()
         else:
             device = torch.device("cpu")
 

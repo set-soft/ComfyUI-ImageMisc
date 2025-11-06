@@ -26,11 +26,10 @@ from typing import Optional
 
 # We are the main source, so we use the main_logger
 from . import main_logger
-from .helpers import load_image_wrapper, save_image
+from .helpers import load_image_wrapper, load_images_wrapper, save_image, upscale, upscale_comfy
 try:
     from folder_paths import get_input_directory, get_output_directory
     from comfy import model_management
-    from comfy.utils import common_upscale
 except ModuleNotFoundError:
     # No ComfyUI, this is a test environment
     def get_input_directory():
@@ -97,6 +96,18 @@ NORM_PARAM = ("FLOAT", {
                 "step": 0.1,
                 "display": "number"})
 MAX_FILES = 0xffffffffffffffff
+EMBED_TRANSPARENCY = ("BOOLEAN", {
+                        "default": False,
+                        "tooltip": "Create RGBA images when they have transparency."})
+SAVE_PROMPT = ("BOOLEAN", {
+                "default": False,
+                "tooltip": "Save prompt submitted to ComfyUI"})
+SAVE_WORKFLOW = ("BOOLEAN", {
+                  "default": False,
+                  "tooltip": "Save the ComfyUI workflow"})
+SHOW_PREVIEW = ("BOOLEAN", {
+                 "default": True,
+                 "tooltip": "Show a preview of the images"})
 # A dictionary to cache loaded fonts
 font_cache = {}
 
@@ -115,11 +126,6 @@ def pil_to_tensor(pil_image: Image.Image) -> torch.Tensor:
     """Converts a Pillow Image to a tensor (H, W, C) [0, 1]."""
     np_image = np.array(pil_image).astype(np.float32) / 255.0
     return torch.from_numpy(np_image)
-
-
-def upscale(image, width, height, upscale_method):
-    # return F.interpolate(image, size=(height, width), mode=upscale_method)
-    return common_upscale(image, width, height, upscale_method, crop="disabled")
 
 
 def parse_size(size_str, reference_dim):
@@ -211,10 +217,7 @@ class ImageDownload:
                     "default": "",
                     "tooltip": "The name used locally. Leave empty to use `filename`"
                 }),
-                "embed_transparency": ("BOOLEAN", {
-                    "default": False,
-                    "tooltip": "Create RGBA images when they have transparency."
-                }),
+                "embed_transparency": EMBED_TRANSPARENCY,
             }
         }
 
@@ -277,28 +280,36 @@ class ImageLoad:
                 "file_name": ("STRING", {
                     "tooltip": "The file name of the image to load"
                 }),
+                "batch_size": ("INT", {
+                    "default": 1,
+                    "min": 1,
+                    "max": 64,
+                    "tooltip": "The number of images to create in the batch"
+                }),
             },
             "optional": {
-                "embed_transparency": ("BOOLEAN", {
-                    "default": False,
-                    "tooltip": "Create RGBA images when they have transparency."
-                }),
+                "embed_transparency": EMBED_TRANSPARENCY,
+                "show_preview": SHOW_PREVIEW
             }
         }
 
     RETURN_TYPES = ("IMAGE", "MASK")
     RETURN_NAMES = ("image", "alpha_mask")
+    OUTPUT_IS_LIST = (True, True)
     FUNCTION = "execute"
     CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
     DESCRIPTION = ("Loads an image from any path")
     UNIQUE_NAME = "SET_ImageLoad"
     DISPLAY_NAME = "Load Image from Path"
+    INPUT_IS_LIST = True
 
-    def execute(self, file_name: str, embed_transparency: bool = False):
-        if not os.path.exists(file_name):
-            raise ValueError(f"File '{file_name}' not found")
+    def execute(self, file_name, batch_size, embed_transparency, show_preview):
+        # Flatten arguments that aren't really expected to be lists
+        batch_size = batch_size[0]
+        embed_transparency = embed_transparency[0]
+        show_preview = show_preview[0]
 
-        return load_image_wrapper(file_name, embed_transparency, show_preview=False)
+        return load_images_wrapper(file_name, embed_transparency, show_preview=show_preview, batch_size=batch_size)
 
 
 class ImageSave:
@@ -309,8 +320,14 @@ class ImageSave:
                 "image": ("IMAGE", {"tooltip": "The images to save."}),
                 "filename": ("STRING", {"default": "", "tooltip": "The file name for the image"})
             },
+            "optional": {
+                "show_preview": SHOW_PREVIEW,
+                "save_prompt": SAVE_PROMPT,
+                "save_workflow": SAVE_WORKFLOW
+            },
             "hidden": {
-                "prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO"
             },
         }
 
@@ -318,15 +335,27 @@ class ImageSave:
     FUNCTION = "execute"
 
     OUTPUT_NODE = True
+    INPUT_IS_LIST = True
 
     CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
     DESCRIPTION = ("Saves an image to an arbitrary path")
     UNIQUE_NAME = "SET_ImageSave"
     DISPLAY_NAME = "Save Image to Path"
 
-    def execute(self, image, filename, prompt=None, extra_pnginfo=None):
-        save_image(image, filename, prompt, extra_pnginfo)
-        return ()
+    def execute(self, image, filename, show_preview, save_prompt, save_workflow, prompt=None,
+                extra_pnginfo=None):
+        # Flatten arguments that aren't really expected to be lists
+        if not save_prompt[0]:
+            prompt = None
+        elif prompt is not None:
+            prompt = prompt[0]
+        if not save_workflow[0]:
+            extra_pnginfo = None
+        elif extra_pnginfo is not None:
+            extra_pnginfo = extra_pnginfo[0]
+        show_preview = show_preview[0]
+
+        return save_image(image, filename, prompt, extra_pnginfo, show_preview=show_preview)
 
 
 class MaskSave:
@@ -337,21 +366,24 @@ class MaskSave:
                 "mask": ("MASK", {"tooltip": "The mask to save."}),
                 "filename": ("STRING", {"default": "", "tooltip": "The file name for the image"})
             },
+            "optional": {
+                "show_preview": SHOW_PREVIEW,
+            },
         }
 
     RETURN_TYPES = ()
     FUNCTION = "execute"
 
     OUTPUT_NODE = True
+    INPUT_IS_LIST = True
 
     CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
     DESCRIPTION = ("Saves a mask to an arbitrary path")
     UNIQUE_NAME = "SET_MaskSave"
     DISPLAY_NAME = "Save Mask to Path"
 
-    def execute(self, mask, filename):
-        save_image(mask, filename)
-        return ()
+    def execute(self, mask, filename, show_preview):
+        return save_image(mask, filename, show_preview=show_preview[0])
 
 
 class ImageDataset:
@@ -442,9 +474,9 @@ class ImageDataset:
             images, _, _ = cls.generate_lists(source, pattern, destination, dest_ext, reference, sort_method,
                                               MAX_FILES, skip_first_images, select_every_nth, random_seed)
         except ValueError:
-            logger.debug(f"IS_CHANGED -> 0 ValueError")
+            logger.debug("No more images, we got ValueError (IS_CHANGED -> 0 )")
             return 0
-        logger.debug(f"IS_CHANGED -> {len(images)}")
+        logger.debug(f"We have more images to process (IS_CHANGED -> {len(images)})")
         return len(images)
 
     def execute(self, source, pattern, destination, dest_ext, reference=None, sort_method="None",
@@ -1153,7 +1185,7 @@ class ImagePad:
                 target_height = H
 
             if extra_padding > 0:
-                image = upscale(image.movedim(-1, 1), W - extra_padding, H - extra_padding, BEST_UPSCALE).movedim(1, -1)
+                image = upscale_comfy(image, W - extra_padding, H - extra_padding, BEST_UPSCALE)
                 B, H, W, C = image.shape
 
             padded_width = target_width
@@ -1469,14 +1501,10 @@ class ImageResize:
                     out_mask = out_mask.narrow(-1, x, crop_w).narrow(-2, y, crop_h)
 
             # Resize the image
-            out_image = upscale(out_image.movedim(-1, 1), width, height, upscale_method).movedim(1, -1)
+            out_image = upscale_comfy(out_image.movedim, width, height, upscale_method)
 
             if out_mask is not None:
-                if upscale_method == "lanczos":
-                    out_mask = upscale(out_mask.unsqueeze(1).repeat(1, 3, 1, 1), width, height,
-                                       upscale_method).movedim(1, -1)[:, :, :, 0]
-                else:
-                    out_mask = upscale(out_mask.unsqueeze(1), width, height, upscale_method).squeeze(1)
+                out_mask = upscale_comfy(out_mask, width, height, upscale_method)
 
             # Pad logic
             if (keep_proportion.startswith("pad") or pillarbox_blur) and (pad_left > 0 or pad_right > 0 or pad_top > 0
@@ -1603,11 +1631,7 @@ class ResizeMask:
             width = round(ow*ratio)
             height = round(oh*ratio)
 
-        if upscale_method == "lanczos":
-            out_mask = common_upscale(mask.unsqueeze(1).repeat(1, 3, 1, 1), width, height, upscale_method,
-                                      crop=crop).movedim(1, -1)[:, :, :, 0]
-        else:
-            out_mask = common_upscale(mask.unsqueeze(1), width, height, upscale_method, crop=crop).squeeze(1)
+        out_mask = upscale_comfy(mask, width, height, upscale_method, crop=crop)
 
         return (out_mask, out_mask.shape[2], out_mask.shape[1],)
 

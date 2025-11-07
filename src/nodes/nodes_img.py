@@ -29,6 +29,9 @@ from typing import Optional
 # We are the main source, so we use the main_logger
 from . import main_logger
 from .helpers import load_image_wrapper, load_images_wrapper, save_image, upscale, upscale_comfy
+from .s_measure import get_s_measure
+from .e_measure import get_e_measure
+from .f_measure import get_f_measure, get_weighted_f_measure
 try:
     from folder_paths import get_input_directory, get_output_directory
 except ModuleNotFoundError:
@@ -659,109 +662,6 @@ class MaskDifference:
         return (diff_image_bhwc,)
 
 
-# --- Helper functions for advanced metrics ---
-# These implementations are PyTorch adaptations of common saliency evaluation libraries.
-# Credit to the original authors of S-measure, E-measure, and Weighted F-measure.
-
-def _get_s_measure(pred, gt):
-    alpha = 0.5
-    y = gt.mean()
-    if y == 0:
-        x = pred.mean()
-        q = 1.0 - x
-    elif y == 1:
-        x = pred.mean()
-        q = x
-    else:
-        # gt is assumed to be binary
-        q = alpha * _object(pred, gt) + (1 - alpha) * _region(pred, gt)
-        if q < 0:
-            q = torch.tensor([0.0], device=pred.device)
-    return q
-
-
-def _object(pred, gt):
-    fg = torch.where(gt == 0, torch.zeros_like(pred), pred)
-    bg = torch.where(gt == 1, torch.zeros_like(pred), 1 - pred)
-    o_fg = _object_calc(fg, gt)
-    o_bg = _object_calc(bg, 1 - gt)
-    u = gt.mean()
-    q = u * o_fg + (1 - u) * o_bg
-    return q
-
-
-def _object_calc(pred, gt):
-    x = pred.mean()
-    # sigma_x = pred.std()
-    score = 2.0 * x / (x**2 + 1.0 + 1e-8)
-    return score
-
-
-def _region(pred, gt):
-    [y, x] = torch.where(gt == 1)
-    if len(y) == 0 or len(x) == 0:
-        return torch.tensor(0.0)
-
-    y_bar, x_bar = y.float().mean(), x.float().mean()
-
-    gt_w = torch.where(gt == 0, gt.float(), 1-gt.float())
-    gt_w[y_bar.long(), x_bar.long()] = 1
-
-    gt_w_sum = gt_w.sum()
-    if gt_w_sum > 0:
-        gt_w = gt_w / gt_w_sum
-    else:  # Handle case where sum is zero
-        gt_w.fill_(1.0 / (gt.shape[0] * gt.shape[1]))
-
-    parts = gt_w.unique()
-
-    if len(parts) == 1:
-        return (1-pred).mean() if parts[0] == 0 else pred.mean()
-
-    w_pred = pred * gt_w
-    return w_pred.sum()
-
-
-def _get_e_measure(pred, gt):
-    # gt is assumed to be binary
-    pred = (pred - pred.mean()) / (pred.std() + 1e-8)
-    gt = (gt - gt.mean()) / (gt.std() + 1e-8)
-
-    align_matrix = 2 * gt * pred / (gt * gt + pred * pred + 1e-8)
-    enhanced = (align_matrix + 1)**2 / 4
-
-    score = torch.mean(enhanced)
-    return score
-
-
-def _get_weighted_f_measure(pred, gt):
-    # gt is assumed to be binary
-
-    # Implementation based on https://github.com/wenguanwang/SODsurvey/
-    # Generates a weight map that gives more importance to pixels near the center.
-    center_w = torch.ones_like(gt)
-    h, w = gt.shape
-    y, x = torch.meshgrid(torch.arange(h, device=gt.device), torch.arange(w, device=gt.device), indexing="ij")
-
-    center_w = 1 - 0.5 * (torch.abs(y - (h-1)/2) / ((h-1)/2) + torch.abs(x - (w-1)/2) / ((w-1)/2))
-
-    tp = center_w * (pred * gt)
-    fp = center_w * (pred * (1-gt))
-    fn = center_w * ((1-pred) * gt)
-
-    # Add a small epsilon to avoid division by zero
-    eps = 1e-6
-
-    prec = tp.sum() / (tp.sum() + fp.sum() + eps)
-    recall = tp.sum() / (tp.sum() + fn.sum() + eps)
-
-    # Using beta^2 = 0.3 as is standard.
-    beta2 = 0.3
-    f_beta = (1 + beta2) * prec * recall / (beta2 * prec + recall + eps)
-
-    return f_beta
-
-
 class SaliencyEvaluationMetrics:
     @classmethod
     def INPUT_TYPES(s):
@@ -817,7 +717,6 @@ class SaliencyEvaluationMetrics:
 
         # --- Initialize accumulators for metrics ---
         mae_total, f_measure_max_total, s_measure_total, e_measure_total, weighted_f_total = 0, 0, 0, 0, 0
-        eps = 1e-6
 
         all = []
         for i in range(batch_size):
@@ -827,7 +726,7 @@ class SaliencyEvaluationMetrics:
 
             # 1. Mean Absolute Error (MAE)
             if mae_enable:
-                mae = torch.mean(torch.abs(pred_i - gt_i))
+                mae = torch.mean(torch.abs(pred_i - gt_i)).item()
                 logger.debug(f"MAE: {mae}")
                 mae_total += mae
                 res['mae'] = mae
@@ -838,45 +737,28 @@ class SaliencyEvaluationMetrics:
 
             # 2. Max F-measure
             if max_f_mes_enable:
-                f_max = 0.0
-                for threshold in torch.linspace(0, 1, 256, device=device):
-                    pred_binary = (pred_i >= threshold).float()
-
-                    tp = (pred_binary * gt_binary).sum()
-
-                    if tp == 0:
-                        continue
-
-                    precision = tp / (pred_binary.sum() + eps)
-                    recall = tp / (gt_binary.sum() + eps)
-
-                    # Using beta^2 = 0.3 as is standard.
-                    beta2 = 0.3
-                    f_beta = (1 + beta2) * precision * recall / (beta2 * precision + recall + eps)
-
-                    if f_beta > f_max:
-                        f_max = f_beta
+                f_max = get_f_measure(pred_i, gt_binary)
                 f_measure_max_total += f_max
                 logger.debug(f"F_max: {f_max}")
                 res['max_f_mes'] = f_max
 
             # 3. S-measure
             if s_mes_enable:
-                s_measure = _get_s_measure(pred_i, gt_binary)
+                s_measure = get_s_measure(pred_i, gt_binary)
                 s_measure_total += s_measure
                 logger.debug(f"S: {s_measure}")
                 res['s_mes'] = s_measure
 
             # 4. E-measure
             if e_mes_enable:
-                e_measure = _get_e_measure(pred_i, gt_binary)
-                e_measure_total += e_measure
-                logger.debug(f"E: {e_measure}")
-                res['e_mes'] = e_measure
+                e_mean, e_max, e_adp, _ = get_e_measure(pred_i, gt_binary)
+                e_measure_total += e_mean
+                logger.debug(f"E: {e_mean} {e_max} {e_adp}")
+                res['e_mes'] = e_mean
 
             # 5. Weighted F-measure
             if wf_mes_enable:
-                wf = _get_weighted_f_measure(pred_i, gt_binary)
+                wf = get_weighted_f_measure(pred_i, gt_binary)
                 weighted_f_total += wf
                 logger.debug(f"wF: {wf}")
                 res['wf_mes'] = wf
@@ -884,11 +766,11 @@ class SaliencyEvaluationMetrics:
             all.append(res)
 
         # --- Average metrics over the batch ---
-        mae_avg = mae_total.item() / batch_size
-        f_measure_avg = f_measure_max_total.item() / batch_size
-        s_measure_avg = s_measure_total.item() / batch_size
-        e_measure_avg = e_measure_total.item() / batch_size
-        weighted_f_avg = weighted_f_total.item() / batch_size
+        mae_avg = mae_total / batch_size
+        f_measure_avg = f_measure_max_total / batch_size
+        s_measure_avg = s_measure_total / batch_size
+        e_measure_avg = e_measure_total / batch_size
+        weighted_f_avg = weighted_f_total / batch_size
 
         return (all, mae_avg, f_measure_avg, s_measure_avg, e_measure_avg, weighted_f_avg)
 

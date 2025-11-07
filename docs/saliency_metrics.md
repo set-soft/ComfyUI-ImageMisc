@@ -27,7 +27,6 @@ This document details the quantitative metrics used to evaluate the performance 
 *   **What it Measures**: The F-measure is the harmonic mean of Precision and Recall, providing a score that balances the two. In saliency evaluation, the continuous prediction map is converted to a binary map using a series of thresholds (from 0 to 255). The F-measure is calculated for each threshold, and the **maximum** value obtained across all thresholds is reported. This adaptive thresholding makes the metric robust to models that produce well-shaped but poorly-calibrated (e.g., generally too dark or bright) saliency maps.
 
 *   **Interpretation**:
-    *   **Range**:.
     *   **Higher is better**. A score of **1** represents a perfect balance of precision and recall at the optimal threshold.
 
 *   **Relevance and Justification**: Unlike the pixel-level MAE, the F-measure is region-based. It evaluates how well the *shape* of the predicted salient region aligns with the ground truth. By finding the optimal threshold for a given prediction, it fairly assesses the quality of the saliency map's structure, forgiving issues with overall intensity. The standard beta-squared value ($&#x03B2;^2$) is set to **0.3** to weigh precision more heavily than recall, as proposed by the authors of the foundational paper below.

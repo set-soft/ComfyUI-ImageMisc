@@ -26,6 +26,7 @@ def get_f_measure(pred: torch.Tensor, gt: torch.Tensor, beta2: float = 0.3) -> f
     """
     # Initialize f_max to store the highest F-measure score found so far.
     f_max = 0.0
+    f = []
 
     # Iterate through 256 evenly spaced thresholds from 0.0 to 1.0.
     # This corresponds to testing every possible 8-bit grayscale value as the cutoff.
@@ -42,6 +43,7 @@ def get_f_measure(pred: torch.Tensor, gt: torch.Tensor, beta2: float = 0.3) -> f
         # Optimization: If there are no true positives, the F-measure will be 0.
         # We can skip the rest of the calculations for this threshold.
         if tp == 0:
+            f.append((threshold, 0))
             continue
 
         # Calculate Precision = TP / (TP + FP).
@@ -55,6 +57,7 @@ def get_f_measure(pred: torch.Tensor, gt: torch.Tensor, beta2: float = 0.3) -> f
         # Calculate the F-beta score using the computed precision and recall.
         # The beta^2=0.3 value is standard in saliency detection literature.
         f_beta = (1 + beta2) * precision * recall / (beta2 * precision + recall + EPS)
+        f.append((threshold, f_beta))
 
         # Update f_max if the F-beta score for the current threshold is the highest yet.
         # .item() extracts the single float value from the 0-dimensional tensor.
@@ -62,7 +65,7 @@ def get_f_measure(pred: torch.Tensor, gt: torch.Tensor, beta2: float = 0.3) -> f
             f_max = f_beta.item()
 
     # After checking all thresholds, return the maximum score found.
-    return f_max
+    return f_max, f
 
 
 def get_weighted_f_measure(pred: torch.Tensor, gt: torch.Tensor, beta2: float = 0.3) -> float:

@@ -112,6 +112,8 @@ SAVE_WORKFLOW = ("BOOLEAN", {
 SHOW_PREVIEW = ("BOOLEAN", {
                  "default": True,
                  "tooltip": "Show a preview of the images"})
+SOD_NAMES = {'mae': "MAE", 'max_f_mes': "Max F-measure", 's_mes': "S-measure", 'e_mes': "E-measure mean",
+             'wf_mes': "Weighted F-measure"}
 # A dictionary to cache loaded fonts
 font_cache = {}
 
@@ -146,6 +148,16 @@ def parse_size(size_str, reference_dim):
             return int(size_str)
         except ValueError:
             return 0
+
+
+def send_progress_text(unique_id, msg):
+    if unique_id and PromptServer is not None:
+        try:
+            PromptServer.instance.send_progress_text(msg, unique_id)
+        except Exception:
+            pass
+    else:
+        logger.info(msg)
 
 
 # Define sort methods for the node input
@@ -670,107 +682,193 @@ class SaliencyEvaluationMetrics:
                 "prediction": ("MASK",),
                 "ground_truth": ("MASK",),
             },
+            "hidden": {
+                "unique_id": "UNIQUE_ID",
+            },
             "optional": {
-                "mae_enable": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "Compute the MAE"}),
-                "max_f_mes_enable": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "Compute the Max_F-measure"}),
-                "s_mes_enable": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "Compute the S-measure"}),
-                "e_mes_enable": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "Compute the E-measure"}),
-                "wf_mes_enable": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "Compute the Weighted F-measure"}),
+                "img_name": ("STRING", {"forceInput" = True, "tooltip": "Name used as base to save the parameters"}),
+                "result_save": ("BOOLEAN", {"default": False, "tooltip": "Save computed values to IMG_NAME.csv"}),
+                "mae_enable": ("BOOLEAN", {"default": True, "tooltip": "Compute the MAE"}),
+                "mae_save": ("BOOLEAN", {"default": False, "tooltip": "Save the MAE using IMG_NAME_MAE.csv"}),
+                "max_f_mes_enable": ("BOOLEAN", {"default": True, "tooltip": "Compute the Max_F-measure"}),
+                "max_f_mes_save": ("BOOLEAN", {"default": False, "tooltip": "Save the F-measure using IMG_NAME_F.csv"}),
+                "s_mes_enable": ("BOOLEAN", {"default": True, "tooltip": "Compute the S-measure"}),
+                "s_mes_save": ("BOOLEAN", {"default": False, "tooltip": "Save the S-measure using IMG_NAME_S.csv"}),
+                "e_mes_enable": ("BOOLEAN", {"default": True, "tooltip": "Compute the E-measure"}),
+                "e_mes_save": ("BOOLEAN", {"default": False, "tooltip": "Save the E-measure using IMG_NAME_E.csv"}),
+                "wf_mes_enable": ("BOOLEAN", {"default": True, "tooltip": "Compute the Weighted F-measure"}),
+                "wf_mes_save": ("BOOLEAN", {"default": False, "tooltip": "Save the Weighted F-measure using IMG_NAME_wF.csv"}),
             },
         }
 
-    RETURN_TYPES = ("DICT", "FLOAT", "FLOAT", "FLOAT", "FLOAT", "FLOAT")
-    RETURN_NAMES = ("all", "MAE", "Max_F-measure", "S-measure", "E-measure", "Weighted_F-measure")
-    OUTPUT_IS_LIST = (True, False, False, False, False, False)
+    RETURN_TYPES = ("DICT", "STRING", "FLOAT", "FLOAT", "FLOAT", "FLOAT", "FLOAT")
+    RETURN_NAMES = ("all", "img_name", "MAE", "Max_F-measure", "S-measure", "E-measure", "Weighted_F-measure")
+    OUTPUT_IS_LIST = (True, True, False, False, False, False, False)
+    INPUT_IS_LIST = True
     FUNCTION = "evaluate"
     CATEGORY = BASE_CATEGORY + "/" + "Analysis"
     UNIQUE_NAME = "SET_SaliencyEvaluationMetrics"
     DISPLAY_NAME = "Saliency Evaluation Metrics"
 
-    def evaluate(self, prediction: torch.Tensor, ground_truth: torch.Tensor, mae_enable: bool = True,
-                 max_f_mes_enable: bool = True, s_mes_enable: bool = True, e_mes_enable: bool = True,
-                 wf_mes_enable: bool = True):
-        # Ensure tensors are on the same device and float type
+    def evaluate(self, prediction: torch.Tensor, ground_truth: torch.Tensor, unique_id,
+                 img_name, result_save: bool = False, mae_enable: bool = True, mae_save: bool = False,
+                 max_f_mes_enable: bool = True, max_f_mes_save: bool = False, s_mes_enable: bool = True,
+                 s_mes_save: bool = False, e_mes_enable: bool = True, e_mes_save: bool = False,
+                 wf_mes_enable: bool = True, wf_mes_save: bool = True):
+        # Flatten arguments that aren't really expected to be lists
+        mae_enable = mae_enable[0]
+        mae_save = mae_save[0]
+        max_f_mes_enable = max_f_mes_enable[0]
+        max_f_mes_save = max_f_mes_save[0]
+        s_mes_enable = s_mes_enable[0]
+        s_mes_save = s_mes_save[0]
+        e_mes_enable = e_mes_enable[0]
+        e_mes_save = e_mes_save[0]
+        wf_mes_enable = wf_mes_enable[0]
+        wf_mes_save = wf_mes_save[0]
+        unique_id = unique_id[0]
+
         device = get_default_comfy_device()
-        inputs_are_copies = get_canonical_device(prediction.device) != device
-        gt = ground_truth.to(device)
-        pred = prediction.to(device)
 
-        # Match batch sizes
-        batch_size = min(pred.shape[0], gt.shape[0])
-        pred = pred[:batch_size]
-        gt = gt[:batch_size]
+        # Ensure we have lists of the same length
+        gt_len = len(ground_truth)
+        pred_len = len(prediction)
+        if gt_len != pred_len:
+            raise ValueError(f"Got {pred_len} predictions and {gt_len} ground thruths, they must match")
 
-        # Ensure masks are normalized to [0, 1] range
-        pred = batched_min_max_norm(pred, in_place=inputs_are_copies)
-        gt = batched_min_max_norm(gt, in_place=inputs_are_copies)
+        # Find how many images we have
+        imgs_len = sum((i.shape[0] for i in prediction))
 
-        # --- Initialize accumulators for metrics ---
-        mae_total, f_measure_max_total, s_measure_total, e_measure_total, weighted_f_total = 0, 0, 0, 0, 0
-
+        # Initialize accumulators for metrics
+        mae_total = f_measure_max_total = s_measure_total = e_measure_total = weighted_f_total = 0
+        e_measure_max_total = e_measure_adp_total = 0
         all = []
-        for i in range(batch_size):
-            pred_i = pred[i]
-            gt_i = gt[i]
-            res = {}
 
-            # 1. Mean Absolute Error (MAE)
-            if mae_enable:
-                mae = torch.mean(torch.abs(pred_i - gt_i)).item()
-                logger.debug(f"MAE: {mae}")
-                mae_total += mae
-                res['mae'] = mae
+        # Names counter
+        index_name = 0
+        names_len = len(img_name)
+        if names_len != imgs_len:
+            raise ValueError(f"Got {imgs_len} images and {names_len} names, they must match")
 
-            # --- Metrics requiring binary ground truth ---
-            if max_f_mes_enable or s_mes_enable or e_mes_enable or wf_mes_enable:
-                gt_binary = (gt_i >= 0.5).float()
+        for index_img in range(pred_len):
+            # Ensure tensors are on the same device
+            inputs_are_copies = get_canonical_device(prediction[index_img].device) != device
+            gt = ground_truth[index_img].to(device)
+            pred = prediction[index_img].to(device)
 
-            # 2. Max F-measure
-            if max_f_mes_enable:
-                f_max = get_f_measure(pred_i, gt_binary)
-                f_measure_max_total += f_max
-                logger.debug(f"F_max: {f_max}")
-                res['max_f_mes'] = f_max
+            # Ensure masks are normalized to [0, 1] range
+            gt = batched_min_max_norm(gt, in_place=inputs_are_copies)
+            pred = batched_min_max_norm(pred, in_place=inputs_are_copies)
 
-            # 3. S-measure
-            if s_mes_enable:
-                s_measure = get_s_measure(pred_i, gt_binary)
-                s_measure_total += s_measure
-                logger.debug(f"S: {s_measure}")
-                res['s_mes'] = s_measure
+            for i in range(gt.shape[0]):
+                # Get the next name
+                imgp = Path(img_name[index_name])
+                index_name += 1
+                logger.debug(f"{index_name}) {imgp.name}")
 
-            # 4. E-measure
-            if e_mes_enable:
-                e_mean, e_max, e_adp, _ = get_e_measure(pred_i, gt_binary)
-                e_measure_total += e_mean
-                logger.debug(f"E: {e_mean} {e_max} {e_adp}")
-                res['e_mes'] = e_mean
+                pred_i = pred[i]
+                gt_i = gt[i]
+                res = {}
 
-            # 5. Weighted F-measure
-            if wf_mes_enable:
-                wf = get_weighted_f_measure(pred_i, gt_binary)
-                weighted_f_total += wf
-                logger.debug(f"wF: {wf}")
-                res['wf_mes'] = wf
+                # 1. Mean Absolute Error (MAE)
+                if mae_enable:
+                    mae = torch.mean(torch.abs(pred_i - gt_i)).item()
+                    logger.debug(f"MAE: {mae}")
+                    mae_total += mae
+                    res['mae'] = mae
+                    if mae_save:
+                        with open(Path(imgp.parent, imgp.stem+"_mae.csv"), "wt") as f:
+                            f.write(f"MAE\n{mae}")
 
-            all.append(res)
+                # --- Metrics requiring binary ground truth ---
+                if max_f_mes_enable or s_mes_enable or e_mes_enable or wf_mes_enable:
+                    gt_binary = (gt_i >= 0.5).float()
 
-        # --- Average metrics over the batch ---
-        mae_avg = mae_total / batch_size
-        f_measure_avg = f_measure_max_total / batch_size
-        s_measure_avg = s_measure_total / batch_size
-        e_measure_avg = e_measure_total / batch_size
-        weighted_f_avg = weighted_f_total / batch_size
+                # 2. Max F-measure
+                if max_f_mes_enable:
+                    f_max, all_f = get_f_measure(pred_i, gt_binary)
+                    f_measure_max_total += f_max
+                    logger.debug(f"Fβmax: {f_max}")
+                    res['max_f_mes'] = f_max
+                    if max_f_mes_save:
+                        with open(Path(imgp.parent, imgp.stem+"_F.csv"), "wt") as f:
+                            f.write("Threshold, F-measure\n")
+                            for fn in all_f:
+                                f.write(f"{fn[0]}, {fn[1]}\n")
+                            f.write(f"\nMax, {f_max}\n")
+
+                # 3. S-measure
+                if s_mes_enable:
+                    s_measure = get_s_measure(pred_i, gt_binary)
+                    s_measure_total += s_measure
+                    logger.debug(f"Sα: {s_measure}")
+                    res['s_mes'] = s_measure
+                    if s_mes_save:
+                        with open(Path(imgp.parent, imgp.stem+"_S.csv"), "wt") as f:
+                            f.write(f"S-measure\n{s_measure}")
+
+                # 4. E-measure
+                if e_mes_enable:
+                    e_mean, e_max, e_adp, all_e, thres = get_e_measure(pred_i, gt_binary)
+                    e_measure_total += e_mean
+                    e_measure_max_total += e_max
+                    e_measure_adp_total += e_adp
+                    logger.debug(f"Eϕ: {e_mean} {e_max} {e_adp}")
+                    res['e_mes'] = e_mean
+                    if e_mes_save:
+                        with open(Path(imgp.parent, imgp.stem+"_E.csv"), "wt") as f:
+                            f.write("Threshold, E-measure\n")
+                            for index, en in enumerate(all_e):
+                                f.write(f"{thres[index]}, {en}\n")
+                            f.write("\n")
+                            f.write(f"Mean, {e_mean}\n")
+                            f.write(f"Max, {e_max}\n")
+                            f.write(f"Adaptive, {e_adp}\n")
+
+                # 5. Weighted F-measure
+                if wf_mes_enable:
+                    wf = get_weighted_f_measure(pred_i, gt_binary)
+                    weighted_f_total += wf
+                    logger.debug(f"Fβw: {wf}")
+                    res['wf_mes'] = wf
+                    if wf_mes_save:
+                        with open(Path(imgp.parent, imgp.stem+"_wF.csv"), "wt") as f:
+                            f.write(f"Weighted F-measure\n{wf}")
+
+                if result_save and res:
+                    with open(Path(imgp.parent, imgp.stem+".csv"), "wt") as f:
+                        f.write(','.join([SOD_NAMES[v] for v in res.keys()])+"\n")
+                        f.write(','.join([str(v) for v in res.values()])+"\n")
+
+                all.append(res)
+
+        # Average metrics over the batch/es
+        mae_avg = mae_total / gt_len
+        f_measure_avg = f_measure_max_total / gt_len
+        s_measure_avg = s_measure_total / gt_len
+        e_measure_avg = e_measure_total / gt_len
+        e_measure_max_avg = e_measure_max_total / gt_len
+        e_measure_adp_avg = e_measure_adp_total / gt_len
+        weighted_f_avg = weighted_f_total / gt_len
+
+        # Show results in the node
+        msg = "<table>"
+        if mae_enable:
+            msg += f"<tr><td>MAE</td><td>{mae_avg:.4f}</td></tr>"
+        if max_f_mes_enable:
+            msg += f"<tr><td>Fβmax</td><td>{f_measure_avg:.4f}</td></tr>"
+        if s_mes_enable:
+            msg += f"<tr><td>Sα</td><td>{s_measure_avg:.4f}</td></tr>"
+        if e_mes_enable:
+            msg += f"<tr><td>Eϕmean</td><td>{e_measure_avg:.4f}</td></tr>"
+            msg += f"<tr><td>Eϕmax</td><td>{e_measure_max_avg:.4f}</td></tr>"
+            msg += f"<tr><td>Eϕadp</td><td>{e_measure_adp_avg:.4f}</td></tr>"
+        if wf_mes_enable:
+            msg += f"<tr><td>Fβw</td><td>{weighted_f_avg:.4f}</td></tr>"
+        msg += "</table>"
+        send_progress_text(unique_id, msg)
+        logger.warning(unique_id)
+        logger.warning(msg)
 
         return (all, mae_avg, f_measure_avg, s_measure_avg, e_measure_avg, weighted_f_avg)
 
@@ -1746,20 +1844,8 @@ class ImageResize:
                 if mask is not None:
                     mask_chunks.append(sub_out_mask.cpu() if sub_out_mask is not None else None)
                 # Per-batch progress update
-                if unique_id and PromptServer is not None:
-                    try:
-                        PromptServer.instance.send_progress_text(
-                            f"<tr><td>Resize Image</td><td>batch {current_batch}/{total_batches} · images {end_idx}/{B}"
-                            "</td></tr>",
-                            unique_id
-                        )
-                    except Exception:
-                        pass
-                else:
-                    try:
-                        logger.info(f"batch {current_batch}/{total_batches} · images {end_idx}/{B}")
-                    except Exception:
-                        pass
+                send_progress_text(unique_id, f"<tr><td>Resize Image</td><td>batch {current_batch}/{total_batches}"
+                                   " · images {end_idx}/{B}</td></tr>")
             out_image = torch.cat(chunks, dim=0)
             if mask is not None and any(m is not None for m in mask_chunks):
                 out_mask = torch.cat([m for m in mask_chunks if m is not None], dim=0)
@@ -1767,19 +1853,11 @@ class ImageResize:
                 out_mask = None
 
         # Progress UI
-        if unique_id and PromptServer is not None:
-            try:
-                num_elements = out_image.numel()
-                element_size = out_image.element_size()
-                memory_size_mb = (num_elements * element_size) / (1024 * 1024)
-
-                PromptServer.instance.send_progress_text(
-                    f"<tr><td>Output: </td><td><b>{out_image.shape[0]}</b> x <b>{out_image.shape[2]}</b> x <b>"
-                    f"{out_image.shape[1]} | {memory_size_mb:.2f}MB</b></td></tr>",
-                    unique_id
-                )
-            except Exception:
-                pass
+        num_elements = out_image.numel()
+        element_size = out_image.element_size()
+        memory_size_mb = (num_elements * element_size) / (1024 * 1024)
+        send_progress_text(unique_id, f"<tr><td>Output: </td><td><b>{out_image.shape[0]}</b> x <b>{out_image.shape[2]}"
+                           f"</b> x <b>{out_image.shape[1]} | {memory_size_mb:.2f} MiB</b></td></tr>")
 
         return (out_image.cpu(), out_image.shape[2], out_image.shape[1],
                 out_mask.cpu() if out_mask is not None else

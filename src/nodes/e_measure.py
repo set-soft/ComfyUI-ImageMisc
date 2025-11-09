@@ -9,7 +9,7 @@ def get_e_measure(
     gt: torch.Tensor,
     num_thresholds: int = 255,
     chunk_size: int = 16
-) -> Tuple[float, float, float, torch.Tensor]:
+) -> Tuple[float, float, float, torch.Tensor, torch.Tensor]:
     """
     Calculates the E-measure scores using a memory-efficient chunking strategy.
 
@@ -30,6 +30,7 @@ def get_e_measure(
         - float: The maximum E-measure score across all thresholds.
         - float: The adaptive E-measure score.
         - torch.Tensor: A 1D tensor with the E-measure score for each threshold.
+        - torch.Tensor: A 1D tensor with the thresholds.
     """
 
     # 1. --- Calculate scores for all thresholds using chunking ---
@@ -71,7 +72,7 @@ def get_e_measure(
         scores.mean().item(),
         scores.max().item(),
         adaptive_score_tensor.item(),
-        scores
+        scores, thlist
     )
 
 

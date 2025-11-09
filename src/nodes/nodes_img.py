@@ -7,7 +7,9 @@
 # Credits:
 # - ImagePad, ImageResize and ResizeMask are from Kijai (https://github.com/kijai/ComfyUI-KJNodes/) v1.1.7
 # - Assisted by Gemini 2.5 Pro
+from collections import defaultdict
 from copy import deepcopy
+import csv
 import numpy as np
 import os
 from pathlib import Path
@@ -686,7 +688,7 @@ class SaliencyEvaluationMetrics:
                 "unique_id": "UNIQUE_ID",
             },
             "optional": {
-                "img_name": ("STRING", {"forceInput" = True, "tooltip": "Name used as base to save the parameters"}),
+                "img_name": ("STRING", {"forceInput": True, "tooltip": "Name used as base to save the parameters"}),
                 "result_save": ("BOOLEAN", {"default": False, "tooltip": "Save computed values to IMG_NAME.csv"}),
                 "mae_enable": ("BOOLEAN", {"default": True, "tooltip": "Compute the MAE"}),
                 "mae_save": ("BOOLEAN", {"default": False, "tooltip": "Save the MAE using IMG_NAME_MAE.csv"}),
@@ -867,10 +869,150 @@ class SaliencyEvaluationMetrics:
             msg += f"<tr><td>Fβw</td><td>{weighted_f_avg:.4f}</td></tr>"
         msg += "</table>"
         send_progress_text(unique_id, msg)
-        logger.warning(unique_id)
-        logger.warning(msg)
 
-        return (all, mae_avg, f_measure_avg, s_measure_avg, e_measure_avg, weighted_f_avg)
+        return (all, img_name, mae_avg, f_measure_avg, s_measure_avg, e_measure_avg, weighted_f_avg)
+
+
+class ConsolidateMetrics:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "metrics": ("DICT",),
+                "img_name": ("STRING", {"forceInput": True, "tooltip": "File names for the evaluated images"}),
+                "destination": ("STRING", {
+                    "default": "./result",
+                    "tooltip": "Path for the result images.\nRelative to ComfyUI output\n"
+                               "If this is a directory the file\nwill be named `consolidated.csv` inside it"
+                }),
+            },
+        }
+
+    INPUT_IS_LIST = True
+    FUNCTION = "execute"
+    CATEGORY = BASE_CATEGORY + "/" + "Analysis"
+    UNIQUE_NAME = "SET_ConsolidateMetrics"
+    DISPLAY_NAME = "Consolidate Metrics"
+    RETURN_TYPES = ()
+    OUTPUT_NODE = True
+
+    def execute(self, metrics, img_name, destination):
+        # --- 1. Input Validation and Flattening ---
+
+        # The inputs are just lists no real need to do much
+        flat_metrics = metrics
+        flat_names = img_name
+
+        if len(flat_metrics) != len(flat_names):
+            raise ValueError(f"Got {len(flat_metrics)} metrics and {len(flat_names)} file names. They must match.")
+        if len(destination) != 1:
+            raise ValueError("Only one `destination` is accepted.")
+
+        # Resolve the final destination path for the CSV file.
+        dest_path = Path(get_output_directory(), destination[0])
+        if dest_path.is_dir():
+            dest_path = dest_path / 'consolidated.csv'
+
+        # Ensure the parent directory exists.
+        dest_path.parent.mkdir(exist_ok=True)
+
+        # --- 2. Load Existing Data from CSV (if it exists) ---
+
+        existing_data = {}
+        header = []
+        metric_keys_ordered = []
+
+        if dest_path.is_file():
+            try:
+                with open(dest_path, 'r', newline='') as f:
+                    reader = csv.reader(f)
+
+                    # Read the header to preserve column order.
+                    header = next(reader)
+
+                    # Extract the internal metric keys from the display names in the header.
+                    # This is crucial for correctly mapping new data to the existing columns.
+                    reverse_sod_names = {v: k for k, v in SOD_NAMES.items()}
+                    metric_keys_ordered = [reverse_sod_names.get(h) for h in header[1:]]
+
+                    # Load existing rows, stopping at any blank line (which precedes totals).
+                    for row in reader:
+                        if not row:  # Stop if we hit a blank line
+                            break
+
+                        # The first column is the image name (with quotes).
+                        filename = row[0].strip('"')
+
+                        # Create a dictionary for the row's metrics.
+                        metric_values = {metric_keys_ordered[i]: float(val) for i, val in enumerate(row[1:])}
+                        existing_data[filename] = metric_values
+            except (IOError, StopIteration, IndexError, ValueError) as e:
+                logger.warning(f"Could not properly read existing file at {dest_path}. It will be overwritten. Error: {e}")
+                existing_data = {}  # Reset on read error
+
+        # --- 3. Consolidate New Metrics ---
+
+        # Add or update the new metrics into our dictionary of existing data.
+        for i, new_metric_dict in enumerate(flat_metrics):
+            filename = Path(flat_names[i]).name
+            existing_data[filename] = new_metric_dict
+
+        if not existing_data:
+            logger.warning("[Warning] No metrics to consolidate. Aborting file write.")
+            return ()
+
+        # --- 4. Prepare for Writing (Sort and Define Header if New) ---
+
+        # If the file was new, define the header and key order now.
+        if not header:
+            # Get the keys from the first available metric dictionary.
+            first_item_keys = list(next(iter(existing_data.values())).keys())
+            metric_keys_ordered = sorted(first_item_keys)  # Sort for consistent order
+            # Create the header with display names.
+            header = ["Image"] + [SOD_NAMES.get(k, k) for k in metric_keys_ordered]
+
+        # Sort the consolidated data alphabetically by filename.
+        sorted_filenames = sorted(existing_data.keys())
+
+        # --- 5. Compute New Totals (Averages) ---
+
+        # Use defaultdict to handle missing metrics gracefully.
+        totals = defaultdict(float)
+        valid_counts = defaultdict(int)
+
+        for filename in sorted_filenames:
+            for key, value in existing_data[filename].items():
+                totals[key] += value
+                valid_counts[key] += 1
+
+        averages = {key: totals[key] / valid_counts[key] for key in metric_keys_ordered if valid_counts[key] > 0}
+
+        # --- 6. Write Consolidated File ---
+
+        with open(dest_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+
+            # Write the header.
+            writer.writerow(header)
+
+            # Write the sorted data rows.
+            for filename in sorted_filenames:
+                metric_dict = existing_data[filename]
+                # Format the filename as required and get metric values in the correct order.
+                row_data = [filename] + [metric_dict.get(key, "") for key in metric_keys_ordered]
+                writer.writerow(row_data)
+
+            # Write a blank line to separate data from totals.
+            writer.writerow([])
+
+            # Write the totals row.
+            total_row = ["Total"] + [f"{averages.get(key, 0.0):.4f}" for key in metric_keys_ordered]
+            writer.writerow(total_row)
+
+        logger.info(f"Metrics consolidated and saved to {dest_path}")
+
+        # This node doesn't produce an output for chaining, so return an empty tuple.
+        return ()
 
 
 class CompositeFace:

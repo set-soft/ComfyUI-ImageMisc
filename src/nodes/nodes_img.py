@@ -239,8 +239,8 @@ class ImageDownload:
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK")
-    RETURN_NAMES = ("image", "alpha_mask")
+    RETURN_TYPES = ("IMAGE", "MASK", "STRING")
+    RETURN_NAMES = ("image", "alpha_mask", "file_name")
     FUNCTION = "load_or_download_image"
     CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
     DESCRIPTION = ("Downloads an image to ComfyUI's 'input' directory if it doesn't exist, then loads it using the "
@@ -311,9 +311,9 @@ class ImageLoad:
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK")
-    RETURN_NAMES = ("image", "alpha_mask")
-    OUTPUT_IS_LIST = (True, True)
+    RETURN_TYPES = ("IMAGE", "MASK", "STRING")
+    RETURN_NAMES = ("image", "alpha_mask", "file_name")
+    OUTPUT_IS_LIST = (True, True, True)
     FUNCTION = "execute"
     CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
     DESCRIPTION = ("Loads an image from any path")
@@ -328,6 +328,48 @@ class ImageLoad:
         show_preview = show_preview[0]
 
         return load_images_wrapper(file_name, embed_transparency, show_preview=show_preview, batch_size=batch_size)
+
+
+class MaskLoad:
+    _color_channels = ["red", "green", "blue", "alpha"]
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "file_name": ("STRING", {
+                    "tooltip": "The file name of the image to load"
+                }),
+                "batch_size": ("INT", {
+                    "default": 1,
+                    "min": 1,
+                    "max": 64,
+                    "tooltip": "The number of images to create in the batch"
+                }),
+            },
+            "optional": {
+                "channel": (cls._color_channels, ),
+                "show_preview": SHOW_PREVIEW
+            }
+        }
+
+    RETURN_TYPES = ("MASK", "STRING")
+    RETURN_NAMES = ("mask", "file_name")
+    OUTPUT_IS_LIST = (True, True)
+    FUNCTION = "execute"
+    CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
+    DESCRIPTION = ("Loads an image from any path using it as a mask")
+    UNIQUE_NAME = "SET_MaskLoad"
+    DISPLAY_NAME = "Load Mask from Path"
+    INPUT_IS_LIST = True
+
+    def execute(self, file_name, batch_size, channel, show_preview):
+        # Flatten arguments that aren't really expected to be lists
+        batch_size = batch_size[0]
+        channel = channel[0]
+        show_preview = show_preview[0]
+
+        return load_images_wrapper(file_name, show_preview=show_preview, batch_size=batch_size, channel=channel)
 
 
 class ImageSave:
@@ -759,8 +801,12 @@ class SaliencyEvaluationMetrics:
             pred = prediction[index_img].to(device)
 
             # Ensure masks are normalized to [0, 1] range
-            gt = batched_min_max_norm(gt, in_place=inputs_are_copies)
-            pred = batched_min_max_norm(pred, in_place=inputs_are_copies)
+            gt, skipped = batched_min_max_norm(gt, in_place=inputs_are_copies, ret_status=True)
+            if skipped:
+                logger.debug("GT mask already [0, 1]")
+            pred, skipped = batched_min_max_norm(pred, in_place=inputs_are_copies, ret_status=True)
+            if skipped:
+                logger.debug("Prediction mask already [0, 1]")
 
             for i in range(gt.shape[0]):
                 # Get the next name

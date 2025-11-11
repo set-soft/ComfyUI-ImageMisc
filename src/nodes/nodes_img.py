@@ -749,6 +749,8 @@ class SaliencyEvaluationMetrics:
     RETURN_NAMES = ("all", "img_name", "MAE", "Max_F-measure", "S-measure", "E-measure", "Weighted_F-measure")
     OUTPUT_IS_LIST = (True, True, False, False, False, False, False)
     INPUT_IS_LIST = True
+    # We generate files when save is enabled and we want to get information even when nothing is connected to the outputs
+    OUTPUT_NODE = True
     FUNCTION = "evaluate"
     CATEGORY = BASE_CATEGORY + "/" + "Analysis"
     UNIQUE_NAME = "SET_SaliencyEvaluationMetrics"

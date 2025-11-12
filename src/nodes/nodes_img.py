@@ -733,6 +733,7 @@ class SaliencyEvaluationMetrics:
             },
             "optional": {
                 "img_name": ("STRING", {"forceInput": True, "tooltip": "Name used as base to save the parameters"}),
+                "normalize": ("BOOLEAN", {"default": False, "tooltip": "Normalize input masks to be in the [0, 1] range"}),
                 "result_save": ("BOOLEAN", {"default": False, "tooltip": "Save computed values to IMG_NAME.csv"}),
                 "mae_enable": ("BOOLEAN", {"default": True, "tooltip": "Compute the MAE"}),
                 "mae_save": ("BOOLEAN", {"default": False, "tooltip": "Save the MAE using IMG_NAME_MAE.csv"}),
@@ -759,11 +760,12 @@ class SaliencyEvaluationMetrics:
     DISPLAY_NAME = "Saliency Evaluation Metrics"
 
     def evaluate(self, prediction: torch.Tensor, ground_truth: torch.Tensor, unique_id,
-                 img_name, result_save: bool = False, mae_enable: bool = True, mae_save: bool = False,
+                 img_name, normalize, result_save: bool = False, mae_enable: bool = True, mae_save: bool = False,
                  max_f_mes_enable: bool = True, max_f_mes_save: bool = False, s_mes_enable: bool = True,
                  s_mes_save: bool = False, e_mes_enable: bool = True, e_mes_save: bool = False,
                  wf_mes_enable: bool = True, wf_mes_save: bool = True):
         # Flatten arguments that aren't really expected to be lists
+        normalize = normalize[0]
         mae_enable = mae_enable[0]
         mae_save = mae_save[0]
         max_f_mes_enable = max_f_mes_enable[0]
@@ -805,12 +807,13 @@ class SaliencyEvaluationMetrics:
             pred = prediction[index_img].to(device)
 
             # Ensure masks are normalized to [0, 1] range
-            gt, skipped = batched_min_max_norm(gt, in_place=inputs_are_copies, ret_status=True)
-            if skipped:
-                logger.debug("GT mask already [0, 1]")
-            pred, skipped = batched_min_max_norm(pred, in_place=inputs_are_copies, ret_status=True)
-            if skipped:
-                logger.debug("Prediction mask already [0, 1]")
+            if normalize:
+                gt, skipped = batched_min_max_norm(gt, in_place=inputs_are_copies, ret_status=True)
+                if skipped:
+                    logger.debug("GT mask already [0, 1]")
+                pred, skipped = batched_min_max_norm(pred, in_place=inputs_are_copies, ret_status=True)
+                if skipped:
+                    logger.debug("Prediction mask already [0, 1]")
 
             for i in range(gt.shape[0]):
                 if img_name[index_name] is None:

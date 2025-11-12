@@ -1,13 +1,12 @@
 import torch
 from typing import Tuple
-# Use a safe epsilon for numerical stability
-EPS = 1e-8
+from . import EPS, F_POINTS
 
 
 def get_e_measure(
     pred: torch.Tensor,
     gt: torch.Tensor,
-    num_thresholds: int = 255,
+    num_thresholds: int = F_POINTS,
     chunk_size: int = 16
 ) -> Tuple[float, float, float, torch.Tensor, torch.Tensor]:
     """
@@ -20,7 +19,7 @@ def get_e_measure(
     Args:
         pred (torch.Tensor): The continuous prediction mask (normalized to [0, 1]).
         gt (torch.Tensor): The binary ground truth mask (values are 0 or 1).
-        num_thresholds (int): The number of thresholds to evaluate. Defaults to 255.
+        num_thresholds (int): The number of thresholds to evaluate. Defaults to F_POINTS.
         chunk_size (int): The number of thresholds to process in a single batch.
                           Lower this value if you encounter VRAM issues. Defaults to 16.
 

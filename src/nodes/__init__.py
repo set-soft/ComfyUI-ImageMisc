@@ -7,3 +7,7 @@ from seconohe.logger import initialize_logger
 __version__ = "1.4.0"
 NODES_NAME = "ImageMisc"
 main_logger = initialize_logger(NODES_NAME)
+
+# Epsilon: small value to avoid "divide by 0" errors
+EPS = 1e-8
+F_POINTS = 255

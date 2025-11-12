@@ -30,7 +30,7 @@ import torchvision.transforms.functional as TF
 from typing import Optional
 
 # We are the main source, so we use the main_logger
-from . import main_logger
+from . import main_logger, F_POINTS
 from .helpers import load_image_wrapper, load_images_wrapper, save_image, upscale, upscale_comfy
 from .s_measure import get_s_measure
 from .e_measure import get_e_measure
@@ -129,8 +129,12 @@ SAVE_WORKFLOW = ("BOOLEAN", {
 SHOW_PREVIEW = ("BOOLEAN", {
                  "default": True,
                  "tooltip": "Show a preview of the images"})
-SOD_NAMES = {'mae': "MAE", 'max_f_mes': "Max F-measure", 's_mes': "S-measure", 'e_mes': "E-measure mean",
-             'wf_mes': "Weighted F-measure"}
+SOD_NAMES = {'mae': "MAE", 'max_f_mes': "Max F-measure", 'adp_f_mes': "Adp F-measure",
+             'max_e_mes': "Max E-measure", 'e_mes': "E-measure mean", 'adp_e_mes': "Adp E-measure",
+             's_mes': "S-measure", 'wf_mes': "Weighted F-measure"}
+for c in range(F_POINTS):
+    SOD_NAMES['f'+str(c)] = f"F({c})"
+    SOD_NAMES['e'+str(c)] = f"E({c})"
 # A dictionary to cache loaded fonts
 font_cache = {}
 
@@ -547,7 +551,7 @@ class ImageDataset:
         return float("NaN")
 
     def execute(self, source, pattern, destination, dest_ext, reference=None, sort_method="None",
-                image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1, show_info=True):
+                image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1):
         # Here self isn't really needed, our state is the filesystem
         source_dir = Path(get_input_directory(), source)
         dest_dir = Path(get_output_directory(), destination)
@@ -843,10 +847,13 @@ class SaliencyEvaluationMetrics:
 
                 # 2. Max F-measure
                 if max_f_mes_enable:
-                    f_max, all_f = get_f_measure(pred_i, gt_binary)
+                    f_max, all_f, f_adp = get_f_measure(pred_i, gt_binary)
                     f_measure_max_total += f_max
                     logger.debug(f"Fβmax: {f_max}")
                     res['max_f_mes'] = f_max
+                    res['adp_f_mes'] = f_adp
+                    for c, v in enumerate(all_f):
+                        res['f'+str(c)] = v[1]
                     if max_f_mes_save:
                         with open(Path(imgp.parent, imgp.stem+"_F.csv"), "wt") as f:
                             f.write("Threshold, F-measure\n")
@@ -872,6 +879,10 @@ class SaliencyEvaluationMetrics:
                     e_measure_adp_total += e_adp
                     logger.debug(f"Eϕ: {e_mean} {e_max} {e_adp}")
                     res['e_mes'] = e_mean
+                    res['max_e_mes'] = e_max
+                    res['adp_e_mes'] = e_adp
+                    for c, v in enumerate(all_e):
+                        res['e'+str(c)] = v.item()
                     if e_mes_save:
                         with open(Path(imgp.parent, imgp.stem+"_E.csv"), "wt") as f:
                             f.write("Threshold, E-measure\n")
@@ -957,12 +968,8 @@ class ConsolidateMetrics:
         if metrics[0] is None or img_name[0] is None or destination[0] is None:
             return ()
 
-        # The inputs are just lists no real need to do much
-        flat_metrics = metrics
-        flat_names = img_name
-
-        if len(flat_metrics) != len(flat_names):
-            raise ValueError(f"Got {len(flat_metrics)} metrics and {len(flat_names)} file names. They must match.")
+        if len(metrics) != len(img_name):
+            raise ValueError(f"Got {len(metrics)} metrics and {len(img_name)} file names. They must match.")
         if len(destination) != 1:
             raise ValueError("Only one `destination` is accepted.")
 
@@ -1011,8 +1018,8 @@ class ConsolidateMetrics:
         # --- 3. Consolidate New Metrics ---
 
         # Add or update the new metrics into our dictionary of existing data.
-        for i, new_metric_dict in enumerate(flat_metrics):
-            filename = Path(flat_names[i]).name
+        for i, new_metric_dict in enumerate(metrics):
+            filename = Path(img_name[i]).name
             existing_data[filename] = new_metric_dict
 
         if not existing_data:
@@ -1024,10 +1031,11 @@ class ConsolidateMetrics:
         # If the file was new, define the header and key order now.
         if not header:
             # Get the keys from the first available metric dictionary.
-            first_item_keys = list(next(iter(existing_data.values())).keys())
-            metric_keys_ordered = sorted(first_item_keys)  # Sort for consistent order
+            # first_item_keys = list(next(iter(existing_data.values())).keys())
+            # metric_keys_ordered = first_item_keys # sorted(first_item_keys)  # Sort for consistent order
             # Create the header with display names.
-            header = ["Image"] + [SOD_NAMES.get(k, k) for k in metric_keys_ordered]
+            metric_keys_ordered = list(SOD_NAMES.keys())
+            header = ["Image"] + list(SOD_NAMES.values())  # [SOD_NAMES.get(k, k) for k in metric_keys_ordered]
 
         # Sort the consolidated data alphabetically by filename.
         sorted_filenames = sorted(existing_data.keys())
@@ -1066,6 +1074,26 @@ class ConsolidateMetrics:
             # Write the totals row.
             total_row = ["Total"] + [f"{averages.get(key, 0.0):.4f}" for key in metric_keys_ordered]
             writer.writerow(total_row)
+
+            # Do we have F(th)?
+            Fmax = max((averages.get('f'+str(v), 0) for v in range(F_POINTS)))
+            Emax = max((averages.get('e'+str(v), 0) for v in range(F_POINTS)))
+
+            if Fmax or Fmax:
+                writer.writerow([])
+
+            if Fmax:
+                # This is the maximum for the average F-measure
+                # Is more representative for the dataset than the average of the maximums of each image
+                writer.writerow(['Fmax dataset', f"{Fmax:.4f}"])
+                Ftot = sum((averages.get('f'+str(v), 0) for v in range(F_POINTS)))
+                writer.writerow(['Fmean dataset', f"{Ftot/F_POINTS:.4f}"])
+
+            # Do we have E(th)?
+            if Emax:
+                writer.writerow(['Emax dataset', f"{Emax:.4f}"])
+                Etot = sum((averages.get('e'+str(v), 0) for v in range(F_POINTS)))
+                writer.writerow(['Emean dataset', f"{Etot/F_POINTS:.4f}"])
 
         logger.info(f"Metrics consolidated and saved to {dest_path}")
 

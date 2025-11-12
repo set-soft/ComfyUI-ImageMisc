@@ -1,6 +1,5 @@
 import torch
-# Epsilon: small value to avoid "divide by 0" errors
-EPS = 1e-8
+from . import EPS
 
 
 def get_s_measure(pred: torch.Tensor, gt: torch.Tensor, alpha: float = 0.5) -> float:

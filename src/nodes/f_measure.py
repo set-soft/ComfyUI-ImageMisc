@@ -1,16 +1,45 @@
-import torch
 import numpy as np
 import scipy
-# Epsilon: small value to avoid "divide by 0" errors
-EPS = 1e-8
+import torch
+from typing import Tuple
+from . import EPS, F_POINTS
 
 
-def get_f_measure(pred: torch.Tensor, gt: torch.Tensor, beta2: float = 0.3) -> float:
+def _f_measure(pred: torch.Tensor, gt: torch.Tensor, threshold: torch.Tensor, beta2: float = 0.3) -> float:
+    # Binarize the continuous prediction map using the current threshold.
+    # Pixels >= threshold become 1.0 (positive), and others become 0.0 (negative).
+    pred_binary = (pred >= threshold).float()
+
+    # Calculate True Positives (TP): pixels that are positive in both the prediction and ground truth.
+    # Element-wise multiplication results in 1 only where both are 1.
+    tp = (pred_binary * gt).sum()
+
+    # Optimization: If there are no true positives, the F-measure will be 0.
+    # We can skip the rest of the calculations for this threshold.
+    if tp == 0:
+        return 0.0
+
+    # Calculate Precision = TP / (TP + FP).
+    # The sum of `pred_binary` gives the total number of predicted positives (TP + FP).
+    precision = tp / (pred_binary.sum() + EPS)
+
+    # Calculate Recall = TP / (TP + FN).
+    # The sum of `gt` gives the total number of actual positives (TP + FN).
+    recall = tp / (gt.sum() + EPS)
+
+    # Calculate the F-beta score using the computed precision and recall.
+    # The beta^2=0.3 value is standard in saliency detection literature.
+    f_beta = (1 + beta2) * precision * recall / (beta2 * precision + recall + EPS)
+
+    return f_beta.item()
+
+
+def get_f_measure(pred: torch.Tensor, gt: torch.Tensor, beta2: float = 0.3) -> Tuple[float, Tuple[float, float], float]:
     """
     Calculates the maximum F-measure score for a continuous prediction against a binary ground truth.
 
     The F-measure evaluates the balance between precision and recall. Since the prediction
-    is a continuous map (0.0 to 1.0), this function iterates through 256 possible
+    is a continuous map (0.0 to 1.0), this function iterates through F_POINTS possible
     thresholds to binarize the prediction. It calculates the F-measure for each
     threshold and returns the highest (max) score found. This provides a fair
     evaluation of the prediction's structural quality, independent of its overall brightness.
@@ -23,49 +52,32 @@ def get_f_measure(pred: torch.Tensor, gt: torch.Tensor, beta2: float = 0.3) -> f
 
     Returns:
         float: The maximum F-measure score found across all thresholds.
+        tuple: The F-measure for all the 255 thresholds we tried, (threshold, F)
+        float: The F-measure for an adaptative threshold
+
     """
     # Initialize f_max to store the highest F-measure score found so far.
     f_max = 0.0
     f = []
 
-    # Iterate through 256 evenly spaced thresholds from 0.0 to 1.0.
+    # Iterate through F_POINTS evenly spaced thresholds from 0.0 to 1.0.
     # This corresponds to testing every possible 8-bit grayscale value as the cutoff.
     # The thresholds tensor is created on the same device as the input for efficiency.
-    for threshold in torch.linspace(0, 1, 256, device=gt.device):
-        # Binarize the continuous prediction map using the current threshold.
-        # Pixels >= threshold become 1.0 (positive), and others become 0.0 (negative).
-        pred_binary = (pred >= threshold).float()
-
-        # Calculate True Positives (TP): pixels that are positive in both the prediction and ground truth.
-        # Element-wise multiplication results in 1 only where both are 1.
-        tp = (pred_binary * gt).sum()
-
-        # Optimization: If there are no true positives, the F-measure will be 0.
-        # We can skip the rest of the calculations for this threshold.
-        if tp == 0:
-            f.append((threshold, 0))
-            continue
-
-        # Calculate Precision = TP / (TP + FP).
-        # The sum of `pred_binary` gives the total number of predicted positives (TP + FP).
-        precision = tp / (pred_binary.sum() + EPS)
-
-        # Calculate Recall = TP / (TP + FN).
-        # The sum of `gt` gives the total number of actual positives (TP + FN).
-        recall = tp / (gt.sum() + EPS)
-
-        # Calculate the F-beta score using the computed precision and recall.
-        # The beta^2=0.3 value is standard in saliency detection literature.
-        f_beta = (1 + beta2) * precision * recall / (beta2 * precision + recall + EPS)
-        f.append((threshold, f_beta))
+    for threshold in torch.linspace(0, 1, F_POINTS, device=gt.device):
+        f_beta = _f_measure(pred, gt, threshold, beta2)
+        f.append((threshold.item(), f_beta))
 
         # Update f_max if the F-beta score for the current threshold is the highest yet.
         # .item() extracts the single float value from the 0-dimensional tensor.
         if f_beta > f_max:
-            f_max = f_beta.item()
+            f_max = f_beta
+
+    # Also compute F for an "adaptative" threshold
+    threshold = min(pred.mean() * 2, 1)
+    f_adp = _f_measure(pred, gt, threshold, beta2)
 
     # After checking all thresholds, return the maximum score found.
-    return f_max, f
+    return f_max, f, f_adp
 
 
 def get_weighted_f_measure(pred: torch.Tensor, gt: torch.Tensor, beta2: float = 0.3) -> float:

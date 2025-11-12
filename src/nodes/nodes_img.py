@@ -69,6 +69,7 @@ except ModuleNotFoundError:
         MASK = "MASK"
         ANY = "*"
     ComfyNodeABC = object
+from comfy_execution.graph import ExecutionBlocker
 
 logger = main_logger
 BASE_CATEGORY = "image"
@@ -540,31 +541,14 @@ class ImageDataset:
     @classmethod
     def IS_CHANGED(cls, source, pattern, destination, dest_ext, reference=None, sort_method="None",
                    image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1):
-        # Here we return how many files remains to be processed
-        # As we progress the number changes and the node is evaluated again
-        # When no files are left we catch the exception and return 0, so the node will be actually evaluated
-        # But this time will raise the exception indicating the process finished.
-        logger.debug(f"ImageDataset.IS_CHANGED {source} {pattern} {destination}")
-        if source is None or destination is None:
-            return float("NaN")
-        try:
-            images, _, _ = cls.generate_lists(source, pattern, destination, dest_ext, reference, sort_method,
-                                              MAX_FILES, skip_first_images, select_every_nth, random_seed, show_info=False)
-        except ValueError:
-            logger.debug("No more images, we got ValueError (IS_CHANGED -> 0 )")
-            return 0
-        logger.debug(f"We have more images to process (IS_CHANGED -> {len(images)})")
-        return len(images)
+        # We always indicate an evaluation is needed.
+        # 1) We must check the directory to know it, so we don't have any advantage on doing it now.
+        # 2) ComfyUI makes any check impossible, if source is connected to a node it will be None
+        return float("NaN")
 
     def execute(self, source, pattern, destination, dest_ext, reference=None, sort_method="None",
-                image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1):
+                image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1, show_info=True):
         # Here self isn't really needed, our state is the filesystem
-        return self.generate_lists(source, pattern, destination, dest_ext, reference, sort_method,
-                                   image_load_cap, skip_first_images, select_every_nth, random_seed)
-
-    @classmethod
-    def generate_lists(cls, source, pattern, destination, dest_ext, reference=None, sort_method="None",
-                       image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1, show_info=True):
         source_dir = Path(get_input_directory(), source)
         dest_dir = Path(get_output_directory(), destination)
         ref_dir = Path(get_input_directory(), reference) if reference else None
@@ -593,7 +577,7 @@ class ImageDataset:
         logger.debug(f"Found {n_files} files in {source_dir}")
 
         # Filter the images
-        source_files = [f for f in source_files if cls.has_valid_extension(f) and compiled_pattern.search(f)]
+        source_files = [f for f in source_files if self.has_valid_extension(f) and compiled_pattern.search(f)]
         n_files = len(source_files)
         if not n_files:
             raise ValueError("No images to process after applying filters")
@@ -651,20 +635,20 @@ class ImageDataset:
                 break
 
         if not len(images):
-            # raise ValueError("Finished processing images")
-            return ([None], [None], [None])
-        if show_info:
-            cur_len = len(images)
-            total = n_files
-            last = total-remain
-            first = last-cur_len+1
+            logger.info("All images processed")
+            return ([ExecutionBlocker("No more images to process")], [ExecutionBlocker(None)], [ExecutionBlocker(None)])
 
-            if cur_len > 1:
-                logger.info(f"Listing {cur_len} images out of {n_files} [{first} to {last}] "
-                            f"[{(first-1)/total:.0%}-{(last)/total:.0%}] left: {remain}")
-            else:
-                logger.info(f"Image {first}/{n_files} [{(first-1)/total:.0%}-{(last)/total:.0%}] left: {remain}")
-            logger.debug(images)
+        cur_len = len(images)
+        total = n_files
+        last = total-remain
+        first = last-cur_len+1
+
+        if cur_len > 1:
+            logger.info(f"Listing {cur_len} images out of {n_files} [{first} to {last}] "
+                        f"[{(first-1)/total:.0%}-{(last)/total:.0%}] left: {remain}")
+        else:
+            logger.info(f"Image {first}/{n_files} [{(first-1)/total:.0%}-{(last)/total:.0%}] left: {remain}")
+        logger.debug(images)
 
         return (images, results, references)
 

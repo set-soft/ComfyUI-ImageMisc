@@ -544,6 +544,9 @@ class ImageDataset:
         # As we progress the number changes and the node is evaluated again
         # When no files are left we catch the exception and return 0, so the node will be actually evaluated
         # But this time will raise the exception indicating the process finished.
+        logger.debug(f"ImageDataset.IS_CHANGED {source} {pattern} {destination}")
+        if source is None or destination is None:
+            return float("NaN")
         try:
             images, _, _ = cls.generate_lists(source, pattern, destination, dest_ext, reference, sort_method,
                                               MAX_FILES, skip_first_images, select_every_nth, random_seed, show_info=False)
@@ -648,7 +651,8 @@ class ImageDataset:
                 break
 
         if not len(images):
-            raise ValueError("Finished processing images")
+            # raise ValueError("Finished processing images")
+            return ([None], [None], [None])
         if show_info:
             cur_len = len(images)
             total = n_files
@@ -825,6 +829,8 @@ class SaliencyEvaluationMetrics:
                 logger.debug("Prediction mask already [0, 1]")
 
             for i in range(gt.shape[0]):
+                if img_name[index_name] is None:
+                    return ([None], img_name, None, None, None, None, None)
                 # Get the next name
                 imgp = Path(img_name[index_name])
                 index_name += 1
@@ -960,6 +966,9 @@ class ConsolidateMetrics:
 
     def execute(self, metrics, img_name, destination):
         # --- 1. Input Validation and Flattening ---
+
+        if metrics[0] is None or img_name[0] is None or destination[0] is None:
+            return ()
 
         # The inputs are just lists no real need to do much
         flat_metrics = metrics

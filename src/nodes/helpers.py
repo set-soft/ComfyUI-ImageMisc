@@ -18,6 +18,17 @@ except Exception:
 logger = main_logger
 
 
+def empty_image(b=0, h=64, w=64, c=1):
+    if b == 0 and c == 1:
+        dims = (h, w)
+    elif c == 1:
+        dims = (b, h, w)
+    else:
+        dims = (b, h, w, c)
+
+    return torch.zeros(dims, dtype=torch.float32, device="cpu")
+
+
 def upscale(image, width, height, upscale_method):
     # return F.interpolate(image, size=(height, width), mode=upscale_method)
     return common_upscale(image, width, height, upscale_method, crop="disabled")
@@ -85,7 +96,7 @@ class CustomLoadImage(object):
                 mask = np.array(i.convert('RGBA').getchannel('A')).astype(np.float32) / 255.0
                 mask = 1. - torch.from_numpy(mask)
             else:
-                mask = torch.zeros((64, 64), dtype=torch.float32, device="cpu")
+                mask = empty_image()
             output_images.append(image)
             output_masks.append(mask.unsqueeze(0))
 
@@ -116,11 +127,13 @@ class CustomLoadMask(object):
             if c == 'A':
                 mask = 1. - mask
         else:
-            mask = torch.zeros((64, 64), dtype=torch.float32, device="cpu")
+            mask = empty_image()
         return (mask.unsqueeze(0),)
 
 
 def get_image_preview_info(file_name, where="input"):
+    if file_name is None:
+        return {}
     # This information is for the preview, as we are an output node and we return images
     # they will be displayed in our node. Quite simple.
     if os.path.isabs(file_name):
@@ -135,6 +148,8 @@ def get_image_preview_info(file_name, where="input"):
 
 
 def load_one_image(file_name, disp_name, embed_transparency):
+    if file_name is None:
+        return (empty_image(b=1, c=3), empty_image(b=1), file_name)
     if not os.path.isabs(file_name):
         file_name = os.path.join(get_input_directory(), file_name)
     if not os.path.exists(file_name):
@@ -177,6 +192,8 @@ def load_one_image(file_name, disp_name, embed_transparency):
 
 
 def load_one_mask(file_name, disp_name, channel='red'):
+    if file_name is None:
+        return (empty_image(b=1), file_name)
     if not os.path.isabs(file_name):
         file_name = os.path.join(get_input_directory(), file_name)
     if not os.path.exists(file_name):

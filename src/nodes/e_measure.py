@@ -71,7 +71,7 @@ def get_e_measure(
         scores.mean().item(),
         scores.max().item(),
         adaptive_score_tensor.item(),
-        scores, thlist
+        scores.cpu(), thlist
     )
 
 

@@ -132,9 +132,9 @@ SHOW_PREVIEW = ("BOOLEAN", {
 SOD_NAMES = {'mae': "MAE", 'max_f_mes': "Max F-measure", 'adp_f_mes': "Adp F-measure",
              'max_e_mes': "Max E-measure", 'e_mes': "E-measure mean", 'adp_e_mes': "Adp E-measure",
              's_mes': "S-measure", 'wf_mes': "Weighted F-measure"}
-for c in range(F_POINTS):
-    SOD_NAMES['f'+str(c)] = f"F({c})"
-    SOD_NAMES['e'+str(c)] = f"E({c})"
+REVERSE_SOD_NAMES = {v: k for k, v in SOD_NAMES.items()}
+IS_VECT_NAME = re.compile(r"(F|FP|FR|E)\((\d+)\)")
+VECT_NAMES = {'e', 'f', 'fp', 'fr'}
 # A dictionary to cache loaded fonts
 font_cache = {}
 
@@ -179,6 +179,47 @@ def send_progress_text(unique_id, msg):
             pass
     else:
         logger.info(msg)
+
+
+def expand_header_keys(header):
+    """ Convert a compact list of keys into a an expanded for a CSV """
+    h = []
+    for key in header:
+        if key in VECT_NAMES:
+            key = key.upper()
+            h.extend([f"{key}({c})" for c in range(F_POINTS)])
+        else:
+            h.append(SOD_NAMES[key])
+    return h
+
+
+def expand_header(header):
+    """ Convert a compact list of keys into a an expanded for a CSV """
+    h = []
+    for key in header:
+        if key.lower() in VECT_NAMES:
+            h.extend([f"{key}({c})" for c in range(F_POINTS)])
+        else:
+            h.append(key)
+    return h
+
+
+def expand_data_row(metric_dict, metric_keys_ordered, formated=False):
+    """ Expand a data row (containing floats and tensors) to a CSV row """
+    row_data = []
+    for key in metric_keys_ordered:
+        if key in VECT_NAMES:
+            data = metric_dict.get(key)
+            if formated:
+                row_data.extend([f"{data[c].item():.4f}" for c in range(F_POINTS)])
+            else:
+                row_data.extend([str(data[c].item()) for c in range(F_POINTS)])
+        else:
+            if formated:
+                row_data.append(f"{metric_dict.get(key, 0.0):.4f}")
+            else:
+                row_data.append(str(metric_dict.get(key, "")))
+    return row_data
 
 
 # Define sort methods for the node input
@@ -852,8 +893,9 @@ class SaliencyEvaluationMetrics:
                     logger.debug(f"Fβmax: {f_max}")
                     res['max_f_mes'] = f_max
                     res['adp_f_mes'] = f_adp
-                    for c, v in enumerate(all_f):
-                        res['f'+str(c)] = v[1]
+                    res['f'] = all_f[1]
+                    res['fp'] = all_f[2]
+                    res['fr'] = all_f[3]
                     if max_f_mes_save:
                         with open(Path(imgp.parent, imgp.stem+"_F.csv"), "wt") as f:
                             f.write("Threshold, F-measure\n")
@@ -881,8 +923,7 @@ class SaliencyEvaluationMetrics:
                     res['e_mes'] = e_mean
                     res['max_e_mes'] = e_max
                     res['adp_e_mes'] = e_adp
-                    for c, v in enumerate(all_e):
-                        res['e'+str(c)] = v.item()
+                    res['e'] = all_e
                     if e_mes_save:
                         with open(Path(imgp.parent, imgp.stem+"_E.csv"), "wt") as f:
                             f.write("Threshold, E-measure\n")
@@ -905,8 +946,9 @@ class SaliencyEvaluationMetrics:
 
                 if result_save and res:
                     with open(Path(imgp.parent, imgp.stem+".csv"), "wt") as f:
-                        f.write(','.join([SOD_NAMES[v] for v in res.keys()])+"\n")
-                        f.write(','.join([str(v) for v in res.values()])+"\n")
+                        keys = [k for k in SOD_NAMES.keys() if k in res] + [k for k in VECT_NAMES if k in res]
+                        f.write(','.join(expand_header_keys(keys))+"\n")
+                        f.write(','.join(expand_data_row(res, keys))+"\n")
 
                 all.append(res)
 
@@ -959,14 +1001,47 @@ class ConsolidateMetrics:
     CATEGORY = BASE_CATEGORY + "/" + "Analysis"
     UNIQUE_NAME = "SET_ConsolidateMetrics"
     DISPLAY_NAME = "Consolidate Metrics"
-    RETURN_TYPES = ()
+    RETURN_TYPES = ("DICT", )
+    RETURN_NAMES = ("consolidated", )
+    OUTPUT_IS_LIST = (True, )
     OUTPUT_NODE = True
+
+    def compact_row(self, row_data, metric_keys_ordered):
+        metric_values = {}
+        # Use a manual index to track our position in the full data row (which has many columns).
+        data_col_idx = 0
+
+        # Iterate through our "compressed" list of metric keys.
+        for key in metric_keys_ordered:
+            # Check if the current key corresponds to a vector.
+            if key in VECT_NAMES:
+                # --- This is a vector metric (like 'f', 'fp', etc.) ---
+                # Define the slice of the row that contains the vector data.
+                start = data_col_idx
+                end = data_col_idx + F_POINTS
+                # Extract the string values for this vector.
+                vector_str_values = row_data[start:end]
+                # Convert the string values to a list of floats.
+                vector_float_values = [float(val) for val in vector_str_values]
+                # Create a PyTorch tensor and store it in the dictionary.
+                metric_values[key] = torch.tensor(vector_float_values, dtype=torch.float32)
+                # Advance the column index by the number of points we just consumed.
+                data_col_idx += F_POINTS
+            else:
+                # --- This is a simple scalar metric (like 'mae', 's_mes', etc.) ---
+                # Read the single value from the current position.
+                scalar_str_value = row_data[data_col_idx]
+                # Convert to float and store it in the dictionary.
+                metric_values[key] = float(scalar_str_value)
+                # Advance the column index by one.
+                data_col_idx += 1
+        return metric_values
 
     def execute(self, metrics, img_name, destination):
         # --- 1. Input Validation and Flattening ---
 
         if metrics[0] is None or img_name[0] is None or destination[0] is None:
-            return ()
+            return ({}, )
 
         if len(metrics) != len(img_name):
             raise ValueError(f"Got {len(metrics)} metrics and {len(img_name)} file names. They must match.")
@@ -997,8 +1072,16 @@ class ConsolidateMetrics:
 
                     # Extract the internal metric keys from the display names in the header.
                     # This is crucial for correctly mapping new data to the existing columns.
-                    reverse_sod_names = {v: k for k, v in SOD_NAMES.items()}
-                    metric_keys_ordered = [reverse_sod_names.get(h) for h in header[1:]]
+                    metric_keys_ordered = []
+                    for i, h in enumerate(header[1:]):
+                        res = IS_VECT_NAME.match(h)
+                        if res:
+                            vect_name = res.group(1)
+                            index = res.group(2)
+                            if index == "0":
+                                metric_keys_ordered.append(vect_name.lower())
+                        else:
+                            metric_keys_ordered.append(REVERSE_SOD_NAMES.get(h))
 
                     # Load existing rows, stopping at any blank line (which precedes totals).
                     for row in reader:
@@ -1009,8 +1092,9 @@ class ConsolidateMetrics:
                         filename = row[0].strip('"')
 
                         # Create a dictionary for the row's metrics.
-                        metric_values = {metric_keys_ordered[i]: float(val) for i, val in enumerate(row[1:])}
+                        metric_values = self.compact_row(row[1:], metric_keys_ordered)
                         existing_data[filename] = metric_values
+
             except (IOError, StopIteration, IndexError, ValueError) as e:
                 logger.warning(f"Could not properly read existing file at {dest_path}. It will be overwritten. Error: {e}")
                 existing_data = {}  # Reset on read error
@@ -1024,7 +1108,7 @@ class ConsolidateMetrics:
 
         if not existing_data:
             logger.warning("[Warning] No metrics to consolidate. Aborting file write.")
-            return ()
+            return ({}, )
 
         # --- 4. Prepare for Writing (Sort and Define Header if New) ---
 
@@ -1034,8 +1118,8 @@ class ConsolidateMetrics:
             # first_item_keys = list(next(iter(existing_data.values())).keys())
             # metric_keys_ordered = first_item_keys # sorted(first_item_keys)  # Sort for consistent order
             # Create the header with display names.
-            metric_keys_ordered = list(SOD_NAMES.keys())
-            header = ["Image"] + list(SOD_NAMES.values())  # [SOD_NAMES.get(k, k) for k in metric_keys_ordered]
+            metric_keys_ordered = list(SOD_NAMES.keys()) + list(VECT_NAMES)
+            header = ["Image"] + expand_header_keys(metric_keys_ordered)
 
         # Sort the consolidated data alphabetically by filename.
         sorted_filenames = sorted(existing_data.keys())
@@ -1059,25 +1143,25 @@ class ConsolidateMetrics:
             writer = csv.writer(f)
 
             # Write the header.
-            writer.writerow(header)
+            writer.writerow(expand_header(header))
 
             # Write the sorted data rows.
             for filename in sorted_filenames:
                 metric_dict = existing_data[filename]
                 # Format the filename as required and get metric values in the correct order.
-                row_data = [filename] + [metric_dict.get(key, "") for key in metric_keys_ordered]
+                row_data = [filename] + expand_data_row(metric_dict, metric_keys_ordered)
                 writer.writerow(row_data)
 
             # Write a blank line to separate data from totals.
             writer.writerow([])
 
             # Write the totals row.
-            total_row = ["Total"] + [f"{averages.get(key, 0.0):.4f}" for key in metric_keys_ordered]
+            total_row = ["Total"] + expand_data_row(averages, metric_keys_ordered, formated=True)
             writer.writerow(total_row)
 
             # Do we have F(th)?
-            Fmax = max((averages.get('f'+str(v), 0) for v in range(F_POINTS)))
-            Emax = max((averages.get('e'+str(v), 0) for v in range(F_POINTS)))
+            Fmax = averages.get('f').max() if 'f' in averages else 0.0
+            Emax = averages.get('e').max() if 'e' in averages else 0.0
 
             if Fmax or Fmax:
                 writer.writerow([])
@@ -1086,19 +1170,277 @@ class ConsolidateMetrics:
                 # This is the maximum for the average F-measure
                 # Is more representative for the dataset than the average of the maximums of each image
                 writer.writerow(['Fmax dataset', f"{Fmax:.4f}"])
-                Ftot = sum((averages.get('f'+str(v), 0) for v in range(F_POINTS)))
+                Ftot = averages.get('f').sum()
                 writer.writerow(['Fmean dataset', f"{Ftot/F_POINTS:.4f}"])
 
             # Do we have E(th)?
             if Emax:
                 writer.writerow(['Emax dataset', f"{Emax:.4f}"])
-                Etot = sum((averages.get('e'+str(v), 0) for v in range(F_POINTS)))
+                Etot = averages.get('e').sum()
                 writer.writerow(['Emean dataset', f"{Etot/F_POINTS:.4f}"])
 
         logger.info(f"Metrics consolidated and saved to {dest_path}")
 
-        # This node doesn't produce an output for chaining, so return an empty tuple.
-        return ()
+        return ([v for v in existing_data.values()], )
+
+
+class PlotMetricCurvesPIL:
+    # Define available colors for the plot line
+    COLORS = ['blue', 'green', 'red', 'cyan', 'magenta', 'black']
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "metrics": ("DICT",),
+                "plot_title": ("STRING", {"default": "Saliency Evaluation"}),
+                "curve_color": (s.COLORS,),
+                "width": ("INT", {"default": 800, "min": 256, "max": 4096}),
+                "height": ("INT", {"default": 600, "min": 256, "max": 4096}),
+            },
+        }
+
+    INPUT_IS_LIST = True
+    RETURN_TYPES = ("IMAGE", "IMAGE")
+    RETURN_NAMES = ("pr_curve_plot", "fm_curve_plot")
+    FUNCTION = "execute"
+    CATEGORY = BASE_CATEGORY + "/" + "Analysis"
+    UNIQUE_NAME = "SET_PlotMetricCurvesPIL"
+    DISPLAY_NAME = "Plot SOD metric curves"
+
+    def _pil_to_tensor(self, pil_image):
+        """Converts a PIL Image to a ComfyUI-compatible IMAGE tensor."""
+        # Convert to numpy array, normalize to [0, 1], and add batch dimension
+        return torch.from_numpy(np.array(pil_image).astype(np.float32) / 255.0).unsqueeze(0)
+
+    def no1_create_plot_with_pil(self, data_x, data_y, title, x_label, y_label, width, height, color, x_lim, y_lim):
+        """
+        A helper function to generate a plot from scratch using PIL.
+        """
+        # --- 1. Setup Canvas and Drawing Tools ---
+        padding = 60  # Pixels for labels and ticks
+        img = Image.new('RGB', (width, height), 'white')
+        draw = ImageDraw.Draw(img)
+
+        # Try to load a standard font, fall back to default if not found
+        try:
+            font = ImageFont.truetype("arial.ttf", 25)
+            title_font = ImageFont.truetype("arial.ttf", 30)
+        except IOError:
+            font = ImageFont.load_default()
+            title_font = font
+
+        # --- 2. Define Plot Area and Coordinate Mapping ---
+        plot_width = width - padding * 2
+        plot_height = height - padding * 2
+
+        # Function to map data coordinates to pixel coordinates
+        def to_pixel(x, y):
+            px = padding + ((x - x_lim[0]) / (x_lim[1] - x_lim[0])) * plot_width
+            # Y is inverted in PIL (0 is at the top)
+            py = (height - padding) - ((y - y_lim[0]) / (y_lim[1] - y_lim[0])) * plot_height
+            return int(px), int(py)
+
+        # --- 3. Draw Grid, Axes, and Ticks ---
+        num_grid_lines = 5
+        # Vertical grid lines and X-axis ticks
+        for i in range(num_grid_lines + 1):
+            val = x_lim[0] + (i / num_grid_lines) * (x_lim[1] - x_lim[0])
+            px, _ = to_pixel(val, y_lim[0])
+            draw.line([(px, padding), (px, height - padding)], fill=(220, 220, 220), width=1)
+            label = f"{val:.1f}" if val % 1 else str(int(val))
+            draw.text((px - 10, height - padding + 5), label, font=font, fill='black')
+
+        # Horizontal grid lines and Y-axis ticks
+        for i in range(num_grid_lines + 1):
+            val = y_lim[0] + (i / num_grid_lines) * (y_lim[1] - y_lim[0])
+            _, py = to_pixel(x_lim[0], val)
+            draw.line([(padding, py), (width - padding, py)], fill=(220, 220, 220), width=1)
+            label = f"{val:.1f}"
+            draw.text((padding - 35, py - 8), label, font=font, fill='black')
+
+        # Draw main axes lines
+        draw.line([(padding, height - padding), (width - padding, height - padding)], fill='black', width=2)  # X-axis
+        draw.line([(padding, padding), (padding, height - padding)], fill='black', width=2)  # Y-axis
+
+        # --- 4. Draw the Data Curve ---
+        pixel_points = [to_pixel(x, y) for x, y in zip(data_x, data_y)
+                        if x_lim[0] <= x <= x_lim[1] and y_lim[0] <= y <= y_lim[1]]
+        if len(pixel_points) > 1:
+            draw.line(pixel_points, fill=color, width=3)
+
+        # --- 5. Draw Title and Labels ---
+        title_bbox = draw.textbbox((0, 0), title, font=title_font)
+        draw.text(((width - (title_bbox[2] - title_bbox[0])) / 2, 10), title, font=title_font, fill='black')
+
+        xlabel_bbox = draw.textbbox((0, 0), x_label, font=font)
+        draw.text(((width - (xlabel_bbox[2] - xlabel_bbox[0])) / 2, height - 25), x_label, font=font, fill='black')
+
+        ylabel_bbox = draw.textbbox((0, 0), y_label, font=font)
+        # For Y label, we draw it rotated by drawing character by character
+        y_label_y_start = (height + (ylabel_bbox[3] - ylabel_bbox[1])) / 2
+        for i, char in enumerate(y_label):
+            draw.text((10, y_label_y_start - i*15), char, font=font, fill='black')
+
+        return img
+
+    def _get_nice_limits(self, data_min, data_max, padding_percent=0.05):
+        """Calculates 'nice' axis limits with padding, handling edge cases."""
+        # Handle the case where all data points are the same
+        if data_min == data_max:
+            return data_min - 0.1, data_max + 0.1
+
+        # Calculate padding based on the data range
+        data_range = data_max - data_min
+        padding = data_range * padding_percent
+
+        # Return the padded limits
+        return data_min - padding, data_max + padding
+
+    def _create_plot_with_pil(self, data_x, data_y, title, x_label, y_label, width, height, color, x_lim=None, y_lim=None):
+        """
+        Generates a plot from scratch using PIL with auto-scaling and rotated Y-axis text.
+        """
+        # --- 1. Auto-scale limits if they are not provided ---
+        if x_lim is None:
+            x_lim = self._get_nice_limits(np.min(data_x), np.max(data_x))
+        if y_lim is None:
+            y_lim = self._get_nice_limits(np.min(data_y), np.max(data_y))
+
+        # --- 2. Setup Canvas and Drawing Tools ---
+        padding_left = 80  # Increased padding to accommodate rotated label
+        padding_right = 30
+        padding_top = 60
+        padding_bottom = 60
+
+        img = Image.new('RGB', (width, height), 'white')
+        draw = ImageDraw.Draw(img)
+        font = load_font("Arial", 15)
+        title_font = load_font("Arial", 20)
+
+        # --- 3. Define Plot Area and Coordinate Mapping ---
+        # (This section is unchanged)
+        plot_width = width - padding_left - padding_right
+        plot_height = height - padding_top - padding_bottom
+
+        def to_pixel(x, y):
+            px = padding_left + ((x - x_lim[0]) / (x_lim[1] - x_lim[0])) * plot_width
+            py = (height - padding_bottom) - ((y - y_lim[0]) / (y_lim[1] - y_lim[0])) * plot_height
+            return int(px), int(py)
+
+        # --- 4. Draw Grid, Axes, and Ticks ---
+        # (This section is unchanged)
+        num_grid_lines = 5
+        for i in range(num_grid_lines + 1):
+            val_x = x_lim[0] + (i / num_grid_lines) * (x_lim[1] - x_lim[0])
+            px, _ = to_pixel(val_x, y_lim[0])
+            draw.line([(px, padding_top), (px, height - padding_bottom)], fill=(220, 220, 220), width=1)
+            label = f"{val_x:.2f}" if val_x % 1 else str(int(val_x))
+            draw.text((px, height - padding_bottom + 5), label, font=font, fill='black', anchor="mt")
+
+        for i in range(num_grid_lines + 1):
+            val_y = y_lim[0] + (i / num_grid_lines) * (y_lim[1] - y_lim[0])
+            _, py = to_pixel(x_lim[0], val_y)
+            draw.line([(padding_left, py), (width - padding_right, py)], fill=(220, 220, 220), width=1)
+            label = f"{val_y:.2f}"
+            draw.text((padding_left - 10, py), label, font=font, fill='black', anchor="rm")
+
+        draw.line([(padding_left, height - padding_bottom), (width - padding_right, height - padding_bottom)], fill='black',
+                  width=2)
+        draw.line([(padding_left, padding_top), (padding_left, height - padding_bottom)], fill='black', width=2)
+
+        # --- 5. Draw the Data Curve ---
+        # (This section is unchanged)
+        pixel_points = [to_pixel(x, y) for x, y in zip(data_x, data_y) if x_lim[0] <= x <= x_lim[1] and
+                        y_lim[0] <= y <= y_lim[1]]
+        if len(pixel_points) > 1:
+            draw.line(pixel_points, fill=color, width=3)
+
+        # --- 6. Draw Title and Labels ---
+
+        # Draw Title and X-axis Label (unchanged)
+        draw.text((width / 2, padding_top / 2), title, font=title_font, fill='black', anchor="mm")
+        draw.text((width / 2, height - padding_bottom / 4), x_label, font=title_font, fill='black', anchor="mb")
+
+        # --- Draw Rotated Y-axis Label ---
+
+        # a. Get the size of the unrotated text
+        # y_label_bbox = font.getbbox(y_label)
+        # y_label_width = y_label_bbox[2] - y_label_bbox[0]
+        # y_label_height = y_label_bbox[3] - y_label_bbox[1]
+
+        # b. Create a new, transparent canvas for the text
+        # txt_canvas = Image.new('RGBA', (y_label_width, y_label_height), (0, 0, 0, 0))
+        txt_canvas = Image.new('RGBA', (height, padding_left), (0, 0, 0, 0))
+        txt_draw = ImageDraw.Draw(txt_canvas)
+
+        # c. Draw the text onto the temporary canvas
+        txt_draw.text((height // 2, padding_left // 4), y_label, font=title_font, fill='black', anchor="mb")
+
+        # d. Rotate the text canvas by 90 degrees
+        # 'expand=True' makes the new image large enough to hold the rotated content
+        rotated_y_label = txt_canvas.rotate(90, expand=True)
+
+        # e. Calculate the paste position on the main canvas
+        # Center it vertically in the plot area and horizontally in the left padding area
+        paste_x = 0  # int((padding_left - rotated_y_label.width) / 2)
+        paste_y = int((height - rotated_y_label.height) / 2)
+
+        # f. Paste the rotated text onto the main image, using its alpha channel as a mask
+        img.paste(rotated_y_label, (paste_x, paste_y), rotated_y_label)
+
+        return img
+
+    def execute(self, metrics, plot_title, curve_color, width, height):
+        # --- 1. Aggregate Data (same as matplotlib version) ---
+        plot_title_str = plot_title[0]
+        curve_color_str = curve_color[0]
+
+        if not metrics:
+            logger.warning("No metrics data provided. Returning blank images.")
+            blank_image = self._pil_to_tensor(Image.new('RGB', (width[0], height[0]), 'white'))
+            return (blank_image, blank_image)
+
+        all_precisions, all_recalls, all_fmeasures = [], [], []
+
+        for metric_dict in metrics:
+            # Check if the dictionary contains the compressed tensor keys.
+            if 'fp' in metric_dict and 'fr' in metric_dict and 'f' in metric_dict:
+                # Retrieve the tensor, move to CPU, and convert to a NumPy array.
+                # The .cpu() is important for safety in case tensors are on the GPU.
+                all_precisions.append(metric_dict['fp'].cpu().numpy())
+                all_recalls.append(metric_dict['fr'].cpu().numpy())
+                all_fmeasures.append(metric_dict['f'].cpu().numpy())
+
+        if not all_precisions:
+            logger.warning("Metrics data did not contain F/FP/FR keys. Returning blank images.")
+            blank_image = self._pil_to_tensor(Image.new('RGB', (width[0], height[0]), 'white'))
+            return (blank_image, blank_image)
+
+        avg_precision = np.mean(all_precisions, axis=0)
+        avg_recall = np.mean(all_recalls, axis=0)
+        avg_fmeasure = np.mean(all_fmeasures, axis=0)
+
+        # --- 2. Generate Precision-Recall (PR) Curve Plot ---
+        pr_plot_pil = self._create_plot_with_pil(
+            data_x=avg_recall, data_y=avg_precision,
+            title=f"{plot_title_str} (PR Curve)", x_label="Recall", y_label="Precision",
+            width=width[0], height=height[0], color=curve_color_str,
+            x_lim=(np.min(avg_recall), np.max(avg_recall)), y_lim=None  # (np.min(avg_precision), np.max(avg_precision)
+        )
+        pr_plot_tensor = self._pil_to_tensor(pr_plot_pil)
+
+        # --- 3. Generate F-Measure Curve Plot ---
+        threshold_axis = np.arange(F_POINTS)
+        fm_plot_pil = self._create_plot_with_pil(
+            data_x=threshold_axis, data_y=avg_fmeasure,
+            title=f"{plot_title_str} (F-Measure Curve)", x_label="Threshold", y_label="F-measure",
+            width=width[0], height=height[0], color=curve_color_str,
+            x_lim=(0, F_POINTS), y_lim=(0.0, 1.0)
+        )
+        fm_plot_tensor = self._pil_to_tensor(fm_plot_pil)
+
+        return (pr_plot_tensor, fm_plot_tensor)
 
 
 class CompositeFace:

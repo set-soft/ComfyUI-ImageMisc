@@ -17,7 +17,7 @@ def _f_measure(pred: torch.Tensor, gt: torch.Tensor, threshold: torch.Tensor, be
     # Optimization: If there are no true positives, the F-measure will be 0.
     # We can skip the rest of the calculations for this threshold.
     if tp == 0:
-        return 0.0
+        return 0.0, 0.0, 0.0
 
     # Calculate Precision = TP / (TP + FP).
     # The sum of `pred_binary` gives the total number of predicted positives (TP + FP).
@@ -31,7 +31,7 @@ def _f_measure(pred: torch.Tensor, gt: torch.Tensor, threshold: torch.Tensor, be
     # The beta^2=0.3 value is standard in saliency detection literature.
     f_beta = (1 + beta2) * precision * recall / (beta2 * precision + recall + EPS)
 
-    return f_beta.item()
+    return f_beta.item(), precision.item(), recall.item()
 
 
 def get_f_measure(pred: torch.Tensor, gt: torch.Tensor, beta2: float = 0.3) -> Tuple[float, Tuple[float, float], float]:
@@ -58,14 +58,15 @@ def get_f_measure(pred: torch.Tensor, gt: torch.Tensor, beta2: float = 0.3) -> T
     """
     # Initialize f_max to store the highest F-measure score found so far.
     f_max = 0.0
-    f = []
+    f4 = torch.Tensor(size=(4, F_POINTS), device="cpu")
+    f = f4.movedim(1, 0)  # Easier here, not for computation
 
     # Iterate through F_POINTS evenly spaced thresholds from 0.0 to 1.0.
     # This corresponds to testing every possible 8-bit grayscale value as the cutoff.
     # The thresholds tensor is created on the same device as the input for efficiency.
-    for threshold in torch.linspace(0, 1, F_POINTS, device=gt.device):
-        f_beta = _f_measure(pred, gt, threshold, beta2)
-        f.append((threshold.item(), f_beta))
+    for c, threshold in enumerate(torch.linspace(0, 1, F_POINTS, device=gt.device)):
+        f_beta, prec, rec = _f_measure(pred, gt, threshold, beta2)
+        f[c] = torch.Tensor((threshold.item(), f_beta, prec, rec))
 
         # Update f_max if the F-beta score for the current threshold is the highest yet.
         # .item() extracts the single float value from the 0-dimensional tensor.
@@ -74,10 +75,10 @@ def get_f_measure(pred: torch.Tensor, gt: torch.Tensor, beta2: float = 0.3) -> T
 
     # Also compute F for an "adaptative" threshold
     threshold = min(pred.mean() * 2, 1)
-    f_adp = _f_measure(pred, gt, threshold, beta2)
+    f_adp, _, _ = _f_measure(pred, gt, threshold, beta2)
 
     # After checking all thresholds, return the maximum score found.
-    return f_max, f, f_adp
+    return f_max, f4, f_adp
 
 
 def get_weighted_f_measure(pred: torch.Tensor, gt: torch.Tensor, beta2: float = 0.3) -> float:

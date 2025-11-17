@@ -17,12 +17,14 @@ from PIL import Image, ImageDraw, ImageFont  # Import the Python Imaging Library
 import random
 import re
 from seconohe.apply_mask import apply_mask
+from seconohe.color import color_to_rgb_float, color_to_rgb_uint8
+from seconohe.comfy_misc import (get_input_directory, get_output_directory, MAX_RESOLUTION, PromptServer, IO, ComfyNodeABC,
+                                 ExecutionBlocker, upscale_methods)
+from seconohe.downloader import download_file
 from seconohe.foreground_estimation.affce import affce
 from seconohe.foreground_estimation.fmlfe import fmlfe, IMPL_PRIORITY
-from seconohe.downloader import download_file
-from seconohe.color import color_to_rgb_float, color_to_rgb_uint8
-from seconohe.torch import get_default_comfy_device, get_canonical_device
 from seconohe.tensor import batched_min_max_norm
+from seconohe.torch import get_default_comfy_device, get_canonical_device
 import torch
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
@@ -34,41 +36,7 @@ from .helpers import load_image_wrapper, load_images_wrapper, save_image, upscal
 from .s_measure import get_s_measure
 from .e_measure import get_e_measure
 from .f_measure import get_f_measure, get_weighted_f_measure
-try:
-    from folder_paths import get_input_directory, get_output_directory
-except ModuleNotFoundError:
-    # No ComfyUI, this is a test environment
-    def get_input_directory():
-        return ""
-    get_output_directory = get_input_directory
 
-try:
-    from nodes import ImageScale
-except Exception:
-    class ImageScale(object):
-        upscale_methods = ["nearest-exact", "bilinear", "area", "bicubic", "lanczos"]
-try:
-    from nodes import MAX_RESOLUTION
-except Exception:
-    MAX_RESOLUTION = 16384
-try:
-    from server import PromptServer
-except ModuleNotFoundError:
-    PromptServer = None
-try:
-    from comfy.comfy_types.node_typing import IO, ComfyNodeABC
-except ModuleNotFoundError:
-    class IO:
-        BOOLEAN = "BOOLEAN"
-        INT = "INT"
-        FLOAT = "FLOAT"
-        STRING = "STRING"
-        NUMBER = "FLOAT,INT"
-        IMAGE = "IMAGE"
-        MASK = "MASK"
-        ANY = "*"
-    ComfyNodeABC = object
-from comfy_execution.graph import ExecutionBlocker
 
 logger = main_logger
 BASE_CATEGORY = "image"
@@ -77,9 +45,9 @@ MANIPULATION_CATEGORY = "manipulation"
 NORMALIZATION = "normalization"
 VALIDATION = "validation"
 FOREGROUND = "foreground"
-BLUR_SIZE_OPT = ("INT", {"default": 90, "min": 1, "max": 255, "step": 1, })
-BLUR_SIZE_TWO_OPT = ("INT", {"default": 6, "min": 1, "max": 255, "step": 1, })
-COLOR_OPT = ("STRING", {
+BLUR_SIZE_OPT = (IO.INT, {"default": 90, "min": 1, "max": 255, "step": 1, })
+BLUR_SIZE_TWO_OPT = (IO.INT, {"default": 6, "min": 1, "max": 255, "step": 1, })
+COLOR_OPT = (IO.STRING, {
                 "default": "#000000",
                 "tooltip": "Color for fill.\n"
                            "Can be an hexadecimal (#RRGGBB).\n"
@@ -87,21 +55,21 @@ COLOR_OPT = ("STRING", {
 DEFAULT_UPSCALE = 'bicubic'     # transforms.InterpolationMode.BICUBIC.value
 MASK_UPSCALE = 'nearest-exact'  # transforms.InterpolationMode.NEAREST_EXACT.value
 BEST_UPSCALE = 'lanczos'        # transforms.InterpolationMode.LANCZOS.value
-UPSCALE_OPT = (ImageScale.upscale_methods, {  # [mode.value for mode in transforms.InterpolationMode]
+UPSCALE_OPT = (upscale_methods, {  # [mode.value for mode in transforms.InterpolationMode]
                 "default": DEFAULT_UPSCALE,
                 "tooltip": "Interpolation method for image resize"
                 })
 UPSCALE_OPT_MASK = deepcopy(UPSCALE_OPT)
 UPSCALE_OPT_MASK[1]["default"] = MASK_UPSCALE
-PAD_SIZE_OPT = ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1, })
-SIZE_OPT = ("INT", {"default": 512, "min": 0, "max": MAX_RESOLUTION, "step": 1})
+PAD_SIZE_OPT = (IO.INT, {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1, })
+SIZE_OPT = (IO.INT, {"default": 512, "min": 0, "max": MAX_RESOLUTION, "step": 1})
 SIZE_OPT_FI = deepcopy(SIZE_OPT)
 SIZE_OPT_FI[1]["forceInput"] = True
 SIZE_OPT_FI[1]["tooltip"] = ("Connect both `target` inputs\n"
                              "If 0 the size of the image is used\n"
                              "Overrides left/right/top/bottom")
 SIZE_OPT[1]["tooltip"] = "Used when no `get_image_size` is provided"
-PAD_TRANS = ("FLOAT", {
+PAD_TRANS = (IO.FLOAT, {
                 "default": 1.0,
                 "min": 0.0,
                 "max": 1.0,
@@ -109,23 +77,23 @@ PAD_TRANS = ("FLOAT", {
                 "display": "number",
                 "tooltip": ("The transparency for the padded area for all modes except `edge_pixel`."
                             "1.0 is fully transparent, 0.0 is fully opaque.")})
-NORM_PARAM = ("FLOAT", {
+NORM_PARAM = (IO.FLOAT, {
                 "default": 1.0,
                 "min": 0.0,
                 "max": 1.0,
                 "step": 0.1,
                 "display": "number"})
 MAX_FILES = 0xffffffffffffffff
-EMBED_TRANSPARENCY = ("BOOLEAN", {
+EMBED_TRANSPARENCY = (IO.BOOLEAN, {
                         "default": False,
                         "tooltip": "Create RGBA images when they have transparency."})
-SAVE_PROMPT = ("BOOLEAN", {
+SAVE_PROMPT = (IO.BOOLEAN, {
                 "default": False,
                 "tooltip": "Save prompt submitted to ComfyUI"})
-SAVE_WORKFLOW = ("BOOLEAN", {
+SAVE_WORKFLOW = (IO.BOOLEAN, {
                   "default": False,
                   "tooltip": "Save the ComfyUI workflow"})
-SHOW_PREVIEW = ("BOOLEAN", {
+SHOW_PREVIEW = (IO.BOOLEAN, {
                  "default": True,
                  "tooltip": "Show a preview of the images"})
 SOD_NAMES = {'mae': "MAE", 'max_f_mes': "Max F-measure", 'adp_f_mes': "Adp F-measure",
@@ -270,27 +238,27 @@ def sort_by(items, base_path='.', method=None, random_seed=1):
         return items
 
 
-class ImageDownload:
+class ImageDownload(ComfyNodeABC):
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "base_url": ("STRING", {
+                "base_url": (IO.STRING, {
                     "default":
                         "https://raw.githubusercontent.com/set-soft/AudioSeparation/refs/heads/main/example_workflows/",
                     "tooltip": "The base URL where the image file is located."
                 }),
-                "filename": ("STRING", {
+                "filename": (IO.STRING, {
                     "default": "audioseparation_logo.jpg",
                     "tooltip": "The name of the image file to download (e.g., photo.jpg, art.png)."
                 }),
             },
             "optional": {
-                "image_bypass": ("IMAGE", {
+                "image_bypass": (IO.IMAGE, {
                      "tooltip": "If this image is present will be used instead of the downloaded one"
                 }),
-                "mask_bypass": ("MASK", {"tooltip": "If this mask is present will be used instead of the downloaded one"}),
-                "local_name": ("STRING", {
+                "mask_bypass": (IO.MASK, {"tooltip": "If this mask is present will be used instead of the downloaded one"}),
+                "local_name": (IO.STRING, {
                     "default": "",
                     "tooltip": "The name used locally. Leave empty to use `filename`"
                 }),
@@ -298,7 +266,7 @@ class ImageDownload:
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK", "STRING")
+    RETURN_TYPES = (IO.IMAGE, IO.MASK, IO.STRING)
     RETURN_NAMES = ("image", "alpha_mask", "file_name")
     FUNCTION = "load_or_download_image"
     CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
@@ -349,15 +317,15 @@ class ImageDownload:
         return load_image_wrapper(dest_fname, embed_transparency, filename)
 
 
-class ImageLoad:
+class ImageLoad(ComfyNodeABC):
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "file_name": ("STRING", {
+                "file_name": (IO.STRING, {
                     "tooltip": "The file name of the image to load"
                 }),
-                "batch_size": ("INT", {
+                "batch_size": (IO.INT, {
                     "default": 1,
                     "min": 1,
                     "max": 64,
@@ -370,7 +338,7 @@ class ImageLoad:
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK", "STRING")
+    RETURN_TYPES = (IO.IMAGE, IO.MASK, IO.STRING)
     RETURN_NAMES = ("image", "alpha_mask", "file_name")
     OUTPUT_IS_LIST = (True, True, True)
     FUNCTION = "execute"
@@ -389,17 +357,17 @@ class ImageLoad:
         return load_images_wrapper(file_name, embed_transparency, show_preview=show_preview, batch_size=batch_size)
 
 
-class MaskLoad:
+class MaskLoad(ComfyNodeABC):
     _color_channels = ["red", "green", "blue", "alpha"]
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "file_name": ("STRING", {
+                "file_name": (IO.STRING, {
                     "tooltip": "The file name of the image to load"
                 }),
-                "batch_size": ("INT", {
+                "batch_size": (IO.INT, {
                     "default": 1,
                     "min": 1,
                     "max": 64,
@@ -412,7 +380,7 @@ class MaskLoad:
             }
         }
 
-    RETURN_TYPES = ("MASK", "STRING")
+    RETURN_TYPES = (IO.MASK, IO.STRING)
     RETURN_NAMES = ("mask", "file_name")
     OUTPUT_IS_LIST = (True, True)
     FUNCTION = "execute"
@@ -431,13 +399,13 @@ class MaskLoad:
         return load_images_wrapper(file_name, show_preview=show_preview, batch_size=batch_size, channel=channel)
 
 
-class ImageSave:
+class ImageSave(ComfyNodeABC):
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
-                "image": ("IMAGE", {"tooltip": "The images to save."}),
-                "filename": ("STRING", {"default": "", "tooltip": "The file name for the image"})
+                "image": (IO.IMAGE, {"tooltip": "The images to save."}),
+                "filename": (IO.STRING, {"default": "", "tooltip": "The file name for the image"})
             },
             "optional": {
                 "show_preview": SHOW_PREVIEW,
@@ -477,13 +445,13 @@ class ImageSave:
         return save_image(image, filename, prompt, extra_pnginfo, show_preview=show_preview)
 
 
-class MaskSave:
+class MaskSave(ComfyNodeABC):
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
-                "mask": ("MASK", {"tooltip": "The mask to save."}),
-                "filename": ("STRING", {"default": "", "tooltip": "The file name for the image"})
+                "mask": (IO.MASK, {"tooltip": "The mask to save."}),
+                "filename": (IO.STRING, {"default": "", "tooltip": "The file name for the image"})
             },
             "optional": {
                 "show_preview": SHOW_PREVIEW,
@@ -505,7 +473,7 @@ class MaskSave:
         return save_image(mask, filename, show_preview=show_preview[0])
 
 
-class ImageDataset:
+class ImageDataset(ComfyNodeABC):
     """
     A ComfyUI node to prepare lists of images for validation tasks,
     such as Salient Object Detection.
@@ -517,30 +485,30 @@ class ImageDataset:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "source": ("STRING", {
+                "source": (IO.STRING, {
                     "default": "./dataset/im",
                     "tooltip": "Path to the images.\nRelative to ComfyUI input"
                 }),
-                "pattern": ("STRING", {
+                "pattern": (IO.STRING, {
                     "default": ".*",
                     "tooltip": "Python regex to match source images."
                 }),
-                "destination": ("STRING", {
+                "destination": (IO.STRING, {
                     "default": "./result",
                     "tooltip": "Path for the result images.\nRelative to ComfyUI output"
                 }),
-                "dest_ext": ("STRING", {
+                "dest_ext": (IO.STRING, {
                     "default": "png",
                     "tooltip": "Extension for the destination images.\nEmpty means same as source"
                 }),
             },
             "optional": {
-                "reference": ("STRING", {
+                "reference": (IO.STRING, {
                     "default": "./dataset/gt",
                     "tooltip": "Path for the reference images.\nRelative to ComfyUI input"
                 }),
                 "sort_method": (sort_methods,),
-                "image_load_cap": ("INT", {
+                "image_load_cap": (IO.INT, {
                     "default": 1,
                     "min": 0,
                     "max": MAX_FILES,
@@ -548,19 +516,19 @@ class ImageDataset:
                                "0 means infinite\n"
                                "Use 1 and queue N runs for low memory usage"
                 }),
-                "skip_first_images": ("INT", {
+                "skip_first_images": (IO.INT, {
                     "default": 0,
                     "min": 0,
                     "max": MAX_FILES,
                     "tooltip": "How many file we will skip before starting to process"
                 }),
-                "select_every_nth": ("INT", {
+                "select_every_nth": (IO.INT, {
                     "default": 1,
                     "min": 1,
                     "max": MAX_FILES,
                     "tooltip": "Keeps only the first of every n files and discard the rest"
                 }),
-                "random_seed": ("INT", {
+                "random_seed": (IO.INT, {
                     "default": 1,
                     "min": 0,
                     "max": MAX_FILES,
@@ -569,7 +537,7 @@ class ImageDataset:
             }
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING",)
+    RETURN_TYPES = (IO.STRING, IO.STRING, IO.STRING,)
     RETURN_NAMES = ("images", "results", "references",)
     # Tell ComfyUI that the outputs of this node are lists.
     OUTPUT_IS_LIST = (True, True, True)
@@ -697,7 +665,7 @@ class ImageDataset:
         return (images, results, references)
 
 
-class MaskDifference:
+class MaskDifference(ComfyNodeABC):
     """
     A ComfyUI node to compare two MASKs (grayscale images).
     The output is a color IMAGE visualizing the difference.
@@ -714,13 +682,13 @@ class MaskDifference:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "result": ("MASK",),
-                "reference": ("MASK",),
+                "result": (IO.MASK,),
+                "reference": (IO.MASK,),
                 "mode": (s.MODES,),
             },
         }
 
-    RETURN_TYPES = ("IMAGE",)
+    RETURN_TYPES = (IO.IMAGE,)
     FUNCTION = "generate_diff"
     CATEGORY = BASE_CATEGORY + "/" + "Compare"
     UNIQUE_NAME = "SET_MaskDifference"
@@ -764,35 +732,36 @@ class MaskDifference:
         return (diff_image_bhwc,)
 
 
-class SaliencyEvaluationMetrics:
+class SaliencyEvaluationMetrics(ComfyNodeABC):
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
-                "prediction": ("MASK",),
-                "ground_truth": ("MASK",),
+                "prediction": (IO.MASK,),
+                "ground_truth": (IO.MASK,),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
             },
             "optional": {
-                "img_name": ("STRING", {"forceInput": True, "tooltip": "Name used as base to save the parameters"}),
-                "normalize": ("BOOLEAN", {"default": False, "tooltip": "Normalize input masks to be in the [0, 1] range"}),
-                "result_save": ("BOOLEAN", {"default": False, "tooltip": "Save computed values to IMG_NAME.csv"}),
-                "mae_enable": ("BOOLEAN", {"default": True, "tooltip": "Compute the MAE"}),
-                "mae_save": ("BOOLEAN", {"default": False, "tooltip": "Save the MAE using IMG_NAME_MAE.csv"}),
-                "max_f_mes_enable": ("BOOLEAN", {"default": True, "tooltip": "Compute the Max_F-measure"}),
-                "max_f_mes_save": ("BOOLEAN", {"default": False, "tooltip": "Save the F-measure using IMG_NAME_F.csv"}),
-                "s_mes_enable": ("BOOLEAN", {"default": True, "tooltip": "Compute the S-measure"}),
-                "s_mes_save": ("BOOLEAN", {"default": False, "tooltip": "Save the S-measure using IMG_NAME_S.csv"}),
-                "e_mes_enable": ("BOOLEAN", {"default": True, "tooltip": "Compute the E-measure"}),
-                "e_mes_save": ("BOOLEAN", {"default": False, "tooltip": "Save the E-measure using IMG_NAME_E.csv"}),
-                "wf_mes_enable": ("BOOLEAN", {"default": True, "tooltip": "Compute the Weighted F-measure"}),
-                "wf_mes_save": ("BOOLEAN", {"default": False, "tooltip": "Save the Weighted F-measure using IMG_NAME_wF.csv"}),
+                "img_name": (IO.STRING, {"forceInput": True, "tooltip": "Name used as base to save the parameters"}),
+                "normalize": (IO.BOOLEAN, {"default": False, "tooltip": "Normalize input masks to be in the [0, 1] range"}),
+                "result_save": (IO.BOOLEAN, {"default": False, "tooltip": "Save computed values to IMG_NAME.csv"}),
+                "mae_enable": (IO.BOOLEAN, {"default": True, "tooltip": "Compute the MAE"}),
+                "mae_save": (IO.BOOLEAN, {"default": False, "tooltip": "Save the MAE using IMG_NAME_MAE.csv"}),
+                "max_f_mes_enable": (IO.BOOLEAN, {"default": True, "tooltip": "Compute the Max_F-measure"}),
+                "max_f_mes_save": (IO.BOOLEAN, {"default": False, "tooltip": "Save the F-measure using IMG_NAME_F.csv"}),
+                "s_mes_enable": (IO.BOOLEAN, {"default": True, "tooltip": "Compute the S-measure"}),
+                "s_mes_save": (IO.BOOLEAN, {"default": False, "tooltip": "Save the S-measure using IMG_NAME_S.csv"}),
+                "e_mes_enable": (IO.BOOLEAN, {"default": True, "tooltip": "Compute the E-measure"}),
+                "e_mes_save": (IO.BOOLEAN, {"default": False, "tooltip": "Save the E-measure using IMG_NAME_E.csv"}),
+                "wf_mes_enable": (IO.BOOLEAN, {"default": True, "tooltip": "Compute the Weighted F-measure"}),
+                "wf_mes_save": (IO.BOOLEAN, {"default": False, "tooltip":
+                                "Save the Weighted F-measure using IMG_NAME_wF.csv"}),
             },
         }
 
-    RETURN_TYPES = ("DICT", "STRING", "FLOAT", "FLOAT", "FLOAT", "FLOAT", "FLOAT")
+    RETURN_TYPES = ("DICT", IO.STRING, IO.FLOAT, IO.FLOAT, IO.FLOAT, IO.FLOAT, IO.FLOAT)
     RETURN_NAMES = ("all", "img_name", "MAE", "Max_F-measure", "S-measure", "E-measure", "Weighted_F-measure")
     OUTPUT_IS_LIST = (True, True, False, False, False, False, False)
     INPUT_IS_LIST = True
@@ -980,14 +949,14 @@ class SaliencyEvaluationMetrics:
         return (all, img_name, mae_avg, f_measure_avg, s_measure_avg, e_measure_avg, weighted_f_avg)
 
 
-class ConsolidateMetrics:
+class ConsolidateMetrics(ComfyNodeABC):
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
                 "metrics": ("DICT",),
-                "img_name": ("STRING", {"forceInput": True, "tooltip": "File names for the evaluated images"}),
-                "destination": ("STRING", {
+                "img_name": (IO.STRING, {"forceInput": True, "tooltip": "File names for the evaluated images"}),
+                "destination": (IO.STRING, {
                     "default": "./result",
                     "tooltip": "Path for the result images.\nRelative to ComfyUI output\n"
                                "If this is a directory the file\nwill be named `consolidated.csv` inside it"
@@ -1183,7 +1152,7 @@ class ConsolidateMetrics:
         return ([v for v in existing_data.values()], )
 
 
-class PlotMetricCurvesPIL:
+class PlotMetricCurvesPIL(ComfyNodeABC):
     # Define available colors for the plot line
     COLORS = ['blue', 'green', 'red', 'cyan', 'magenta', 'black']
 
@@ -1192,15 +1161,15 @@ class PlotMetricCurvesPIL:
         return {
             "required": {
                 "metrics": ("DICT",),
-                "plot_title": ("STRING", {"default": "Saliency Evaluation"}),
+                "plot_title": (IO.STRING, {"default": "Saliency Evaluation"}),
                 "curve_color": (s.COLORS,),
-                "width": ("INT", {"default": 800, "min": 256, "max": 4096}),
-                "height": ("INT", {"default": 600, "min": 256, "max": 4096}),
+                "width": (IO.INT, {"default": 800, "min": 256, "max": 4096}),
+                "height": (IO.INT, {"default": 600, "min": 256, "max": 4096}),
             },
         }
 
     INPUT_IS_LIST = True
-    RETURN_TYPES = ("IMAGE", "IMAGE")
+    RETURN_TYPES = (IO.IMAGE, IO.IMAGE)
     RETURN_NAMES = ("pr_curve_plot", "fm_curve_plot")
     FUNCTION = "execute"
     CATEGORY = BASE_CATEGORY + "/" + "Analysis"
@@ -1442,7 +1411,7 @@ class PlotMetricCurvesPIL:
         return (pr_plot_tensor, fm_plot_tensor)
 
 
-class CompositeFace:
+class CompositeFace(ComfyNodeABC):
     """
     A ComfyUI node to composite (paste) animated face crops back onto reference images.
     It handles a M-to-N relationship, where M reference images and bboxes correspond
@@ -1452,13 +1421,13 @@ class CompositeFace:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "animated": ("IMAGE",),      # The M*N batch of cropped faces
-                "reference": ("IMAGE",),     # The M batch of original context images
+                "animated": (IO.IMAGE,),      # The M*N batch of cropped faces
+                "reference": (IO.IMAGE,),     # The M batch of original context images
                 "bboxes": ("BBOX",),         # The M list of (x, y, w, h) tuples
             },
         }
 
-    RETURN_TYPES = ("IMAGE",)
+    RETURN_TYPES = (IO.IMAGE,)
     RETURN_NAMES = ("images",)
     FUNCTION = "composite"
 
@@ -1546,8 +1515,8 @@ class CompositeFaceFrameByFrame(CompositeFace):
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "animated": ("IMAGE",),      # The batch of cropped/processed frames
-                "reference": ("IMAGE",),     # The batch of original frames
+                "animated": (IO.IMAGE,),      # The batch of cropped/processed frames
+                "reference": (IO.IMAGE,),     # The batch of original frames
                 "bboxes": ("BBOX",),         # A list of bboxes; only the first is used
             },
         }
@@ -1612,7 +1581,7 @@ class CompositeFaceFrameByFrame(CompositeFace):
         return (final_batch,)
 
 
-class NormalizeToImageNetDataset():
+class NormalizeToImageNetDataset(ComfyNodeABC):
     """
     A ComfyUI node to normalize the values to the mean/std of the ImageNet dataset
     """
@@ -1620,10 +1589,10 @@ class NormalizeToImageNetDataset():
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "image": ("IMAGE",),
+                "image": (IO.IMAGE,),
             },
         }
-    RETURN_TYPES = ("IMAGE",)
+    RETURN_TYPES = (IO.IMAGE,)
     RETURN_NAMES = ("image",)
     FUNCTION = "normalize"
     CATEGORY = BASE_CATEGORY + "/" + NORMALIZATION
@@ -1637,14 +1606,14 @@ class NormalizeToImageNetDataset():
                              std=[0.229, 0.224, 0.225]).permute(0, 2, 3, 1),)  # BCHW -> BHWC
 
 
-class NormalizeToRangeMinus05to05():
+class NormalizeToRangeMinus05to05(ComfyNodeABC):
     """
     A ComfyUI node to normalize the values to the [-0.5, 0.5] range
     """
     @classmethod
     def INPUT_TYPES(cls):
-        return {"required": {"image": ("IMAGE",), }, }
-    RETURN_TYPES = ("IMAGE",)
+        return {"required": {"image": (IO.IMAGE,), }, }
+    RETURN_TYPES = (IO.IMAGE,)
     RETURN_NAMES = ("image",)
     FUNCTION = "normalize"
     CATEGORY = BASE_CATEGORY + "/" + NORMALIZATION
@@ -1658,14 +1627,14 @@ class NormalizeToRangeMinus05to05():
                              std=[1.0, 1.0, 1.0]).permute(0, 2, 3, 1),)  # BCHW -> BHWC
 
 
-class NormalizeToRangeMinus1to1():
+class NormalizeToRangeMinus1to1(ComfyNodeABC):
     """
     A ComfyUI node to normalize the values to the [-1, 1] range
     """
     @classmethod
     def INPUT_TYPES(cls):
-        return {"required": {"image": ("IMAGE",), }, }
-    RETURN_TYPES = ("IMAGE",)
+        return {"required": {"image": (IO.IMAGE,), }, }
+    RETURN_TYPES = (IO.IMAGE,)
     RETURN_NAMES = ("image",)
     FUNCTION = "normalize"
     CATEGORY = BASE_CATEGORY + "/" + NORMALIZATION
@@ -1679,7 +1648,7 @@ class NormalizeToRangeMinus1to1():
                              std=[0.5, 0.5, 0.5]).permute(0, 2, 3, 1),)  # BCHW -> BHWC
 
 
-class NormalizeArbitrary():
+class NormalizeArbitrary(ComfyNodeABC):
     """
     A ComfyUI node to normalize the values to arbitrary mean/std
     """
@@ -1687,11 +1656,11 @@ class NormalizeArbitrary():
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "image": ("IMAGE",),
+                "image": (IO.IMAGE,),
                 "parameters": ("NORM_PARAMS",),
             },
         }
-    RETURN_TYPES = ("IMAGE",)
+    RETURN_TYPES = (IO.IMAGE,)
     RETURN_NAMES = ("image",)
     FUNCTION = "normalize"
     CATEGORY = BASE_CATEGORY + "/" + NORMALIZATION
@@ -1705,7 +1674,7 @@ class NormalizeArbitrary():
                              std=parameters["std"]).movedim(1, -1),)  # BCHW -> BHWC
 
 
-class NormalizeParameters():
+class NormalizeParameters(ComfyNodeABC):
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -1730,22 +1699,22 @@ class NormalizeParameters():
         return ({"mean": [mean_red, mean_green, mean_blue], "std": [std_red, std_green, std_blue]},)
 
 
-class ApplyMaskAFFCE:
+class ApplyMaskAFFCE(ComfyNodeABC):
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "images": ("IMAGE",),
-                "masks": ("MASK",),
+                "images": (IO.IMAGE,),
+                "masks": (IO.MASK,),
                 "blur_size": BLUR_SIZE_OPT,
                 "blur_size_two": BLUR_SIZE_TWO_OPT,
-                "fill_color": ("BOOLEAN", {
+                "fill_color": (IO.BOOLEAN, {
                     "default": False,
                     "tooltip": ("Fill the background using a color.\n"
                                 "Returns an RGB image, otherwise an RGBA.")
                 }),
                 "color": COLOR_OPT,
-                "batched":  ("BOOLEAN", {
+                "batched":  (IO.BOOLEAN, {
                     "default": True,
                     "tooltip": ("Process the images at once.\n"
                                 "Faster, needs more memory")
@@ -1753,7 +1722,7 @@ class ApplyMaskAFFCE:
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK",)
+    RETURN_TYPES = (IO.IMAGE, IO.MASK,)
     RETURN_NAMES = ("image", "mask",)
     FUNCTION = "get_foreground"
     CATEGORY = BASE_CATEGORY + "/" + MANIPULATION_CATEGORY
@@ -1769,16 +1738,16 @@ class ApplyMaskAFFCE:
         return out_images.cpu(), masks.cpu()
 
 
-class AFFCE:
+class AFFCE(ComfyNodeABC):
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "images": ("IMAGE",),
-                "masks": ("MASK",),
+                "images": (IO.IMAGE,),
+                "masks": (IO.MASK,),
                 "blur_size": BLUR_SIZE_OPT,
                 "blur_size_two": BLUR_SIZE_TWO_OPT,
-                "batched":  ("BOOLEAN", {
+                "batched":  (IO.BOOLEAN, {
                     "default": True,
                     "tooltip": ("Process the images at once.\n"
                                 "Faster, needs more memory")
@@ -1786,7 +1755,7 @@ class AFFCE:
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK",)
+    RETURN_TYPES = (IO.IMAGE, IO.MASK,)
     RETURN_NAMES = ("foreground", "mask",)
     FUNCTION = "get_foreground"
     CATEGORY = BASE_CATEGORY + "/" + FOREGROUND
@@ -1806,7 +1775,7 @@ class AFFCE:
         return out_images.cpu(), masks.cpu()
 
 
-class FMLFE:
+class FMLFE(ComfyNodeABC):
     """
     A ComfyUI node that uses the Fast Multi-Level Foreground Estimation algorithm
     to produce a high-quality foreground and background separation. It can
@@ -1820,10 +1789,10 @@ class FMLFE:
 
         return {
             "required": {
-                "images": ("IMAGE", {
+                "images": (IO.IMAGE, {
                     "tooltip": "The source image(s) from which to estimate the foreground and background."
                 }),
-                "masks": ("MASK", {
+                "masks": (IO.MASK, {
                     "tooltip": "The alpha matte that guides the estimation. White areas are treated as known "
                                "foreground, black as known background, and gray areas are the semi-transparent "
                                "regions the algorithm will solve for."
@@ -1836,7 +1805,7 @@ class FMLFE:
                 }),
             },
             "optional": {
-                "regularization": ("FLOAT", {
+                "regularization": (IO.FLOAT, {
                     "default": 1e-5,
                     "min": 0.0,
                     "max": 0.1,
@@ -1846,14 +1815,14 @@ class FMLFE:
                                "Higher values result in smoother, more blended foreground and background colors, "
                                "but may lose very fine details. Lower values preserve more detail but can be noisier."
                 }),
-                "n_small_iterations": ("INT", {
+                "n_small_iterations": (IO.INT, {
                     "default": 10,
                     "min": 1,
                     "max": 100,
                     "tooltip": "The number of solver iterations to perform on the lower-resolution levels of the "
                                "image pyramid. More iterations can improve quality at the cost of speed."
                 }),
-                "n_big_iterations": ("INT", {
+                "n_big_iterations": (IO.INT, {
                     "default": 2,
                     "min": 1,
                     "max": 100,
@@ -1861,14 +1830,14 @@ class FMLFE:
                                "of the image pyramid. Fewer iterations are typically needed at high resolution as the "
                                "details are propagated up from the smaller levels."
                 }),
-                "small_size": ("INT", {
+                "small_size": (IO.INT, {
                     "default": 32,
                     "min": 8,
                     "max": 256,
                     "tooltip": "The pixel dimension threshold. Image pyramid levels smaller than this size will use "
                                "the higher 'n_small_iterations' count, while larger levels will use 'n_big_iterations'."
                 }),
-                "gradient_weight": ("FLOAT", {
+                "gradient_weight": (IO.FLOAT, {
                     "default": 1.0,
                     "min": 0.0,
                     "max": 10.0,
@@ -1881,7 +1850,7 @@ class FMLFE:
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "IMAGE", "MASK",)
+    RETURN_TYPES = (IO.IMAGE, IO.IMAGE, IO.MASK,)
     RETURN_NAMES = ("foreground", "background", "mask")
     FUNCTION = "estimate"
     CATEGORY = BASE_CATEGORY + "/" + FOREGROUND
@@ -1916,7 +1885,7 @@ class FMLFE:
             raise e
 
 
-class CreateEmptyImage:
+class CreateEmptyImage(ComfyNodeABC):
     """
     A ComfyUI node to create a solid-color image tensor.
     The output dimensions can be specified manually or inherited from an optional input image.
@@ -1925,21 +1894,21 @@ class CreateEmptyImage:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "width": ("INT", {
+                "width": (IO.INT, {
                     "default": 1024,
                     "min": 1,
                     "max": 8192,
                     "step": 8,
                     "tooltip": "The width of the new image in pixels. This value is ignored if a `reference` is provided."
                 }),
-                "height": ("INT", {
+                "height": (IO.INT, {
                     "default": 1024,
                     "min": 1,
                     "max": 8192,
                     "step": 8,
                     "tooltip": "The height of the new image in pixels. This value is ignored if a `reference` is provided."
                 }),
-                "batch_size": ("INT", {
+                "batch_size": (IO.INT, {
                     "default": 1,
                     "min": 1,
                     "max": 64,
@@ -1949,14 +1918,14 @@ class CreateEmptyImage:
                 "color": COLOR_OPT,
             },
             "optional": {
-                "reference": ("IMAGE", {
+                "reference": (IO.IMAGE, {
                     "tooltip": "If an image is connected here, its dimensions (batch size, height, and width) will be "
                                "used for the new image, overriding the manual width, height, and batch_size inputs."
                 }),
             }
         }
 
-    RETURN_TYPES = ("IMAGE",)
+    RETURN_TYPES = (IO.IMAGE,)
     RETURN_NAMES = ("image",)
     FUNCTION = "create_image"
     CATEGORY = BASE_CATEGORY + "/generation"
@@ -1992,12 +1961,12 @@ class CreateEmptyImage:
 # - When target_width/target_height are 0 we use the image size
 # - Added control over the transparency of the padded area (pad_transparency)
 # - Handle RGBA images
-class ImagePad:
+class ImagePad(ComfyNodeABC):
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
-                "image": ("IMAGE", ),
+                "image": (IO.IMAGE, ),
                 "left": PAD_SIZE_OPT,
                 "right": PAD_SIZE_OPT,
                 "top": PAD_SIZE_OPT,
@@ -2007,14 +1976,14 @@ class ImagePad:
                 "color": COLOR_OPT,
             },
             "optional": {
-                "mask": ("MASK", ),
+                "mask": (IO.MASK, ),
                 "target_width": SIZE_OPT_FI,
                 "target_height": SIZE_OPT_FI,
                 "pad_transparency": PAD_TRANS,
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK", )
+    RETURN_TYPES = (IO.IMAGE, IO.MASK, )
     RETURN_NAMES = ("images", "masks",)
     FUNCTION = "pad"
     CATEGORY = BASE_CATEGORY + "/" + MANIPULATION_CATEGORY
@@ -2186,7 +2155,7 @@ class ImagePad:
 # - We can copy the size of a reference image (found in V1, not in V2)
 # - Removed misleading code to compute padded size when width and/or height was missing
 # - Added control over the transparency of the padded area
-class ImageResize:
+class ImageResize(ComfyNodeABC):
     """
     A resize and crop node, from ImageResizeKJv2
     """
@@ -2194,7 +2163,7 @@ class ImageResize:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "image": ("IMAGE", {"tooltip": "Image to resize"}),
+                "image": (IO.IMAGE, {"tooltip": "Image to resize"}),
                 "width": SIZE_OPT,
                 "height": SIZE_OPT,
                 "upscale_method": UPSCALE_OPT,
@@ -2208,14 +2177,14 @@ class ImageResize:
                 "pad_color": COLOR_OPT,
                 "crop_position": (["center", "top", "bottom", "left", "right"],
                                   {"default": "center", "tooltip": "Also used for `pad`"}),
-                "divisible_by": ("INT", {"default": 2, "min": 0, "max": 512, "step": 1,
-                                         "tooltip": "Force the final size to be divisible by"}),
+                "divisible_by": (IO.INT, {"default": 2, "min": 0, "max": 512, "step": 1,
+                                          "tooltip": "Force the final size to be divisible by"}),
             },
             "optional": {
-                "mask": ("MASK", {"tooltip": "Optional mask for the image\nwill be resized"}),
+                "mask": (IO.MASK, {"tooltip": "Optional mask for the image\nwill be resized"}),
                 "device": (["cpu", "gpu"],),
-                "get_image_size": ("IMAGE", {"tooltip": "Image size to use as reference"}),
-                "per_batch": ("INT", {
+                "get_image_size": (IO.IMAGE, {"tooltip": "Image size to use as reference"}),
+                "per_batch": (IO.INT, {
                     "default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1,
                     "tooltip": "Process images in sub-batches to reduce memory usage. 0 disables sub-batching."}),
                 "pad_transparency": PAD_TRANS,
@@ -2225,7 +2194,7 @@ class ImageResize:
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "INT", "INT", "MASK",)
+    RETURN_TYPES = (IO.IMAGE, IO.INT, IO.INT, IO.MASK,)
     RETURN_NAMES = ("IMAGE", "width", "height", "mask",)
     FUNCTION = "resize"
     CATEGORY = BASE_CATEGORY + "/" + MANIPULATION_CATEGORY
@@ -2435,24 +2404,24 @@ class ImageResize:
 
 # Adapted from KJNodes, credits to Kijai
 # Difference: reference image `get_image_size`
-class ResizeMask:
+class ResizeMask(ComfyNodeABC):
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
-                "mask": ("MASK",),
+                "mask": (IO.MASK,),
                 "width": SIZE_OPT,
                 "height": SIZE_OPT,
-                "keep_proportions": ("BOOLEAN", {"default": False}),
+                "keep_proportions": (IO.BOOLEAN, {"default": False}),
                 "upscale_method": UPSCALE_OPT_MASK,
                 "crop": (["disabled", "center"],),
             },
             "optional": {
-                "get_image_size": ("IMAGE", {"tooltip": "Image size to use as reference"}),
+                "get_image_size": (IO.IMAGE, {"tooltip": "Image size to use as reference"}),
             },
         }
 
-    RETURN_TYPES = ("MASK", "INT", "INT",)
+    RETURN_TYPES = (IO.MASK, IO.INT, IO.INT,)
     RETURN_NAMES = ("mask", "width", "height",)
     FUNCTION = "resize"
     CATEGORY = BASE_CATEGORY + "/" + MANIPULATION_CATEGORY
@@ -2508,34 +2477,34 @@ def load_font(font_name, font_size):
     return font
 
 
-class ImageWithTextLabel:
+class ImageWithTextLabel(ComfyNodeABC):
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
-                "text": ("STRING", {
+                "text": (IO.STRING, {
                     "multiline": True, "default": "Your text here",
                     "tooltip": "Label for this image"}),
                 "side": (["top", "bottom", "left", "right"],),
-                "label_size": ("STRING", {
+                "label_size": (IO.STRING, {
                     "default": "10%",
                     "tooltip": "Expressed as a percentage (i.e. 10%) or absolute number of pixels"}),
-                "separation": ("STRING", {
+                "separation": (IO.STRING, {
                     "default": "1%",
                     "tooltip": "Expressed as a percentage (i.e. 1%) or absolute number of pixels"}),
-                "background_color": ("STRING", {"default": "white"}),
-                "foreground_color": ("STRING", {"default": "black"}),
-                "font_name": ("STRING", {"default": "Arial"}),
+                "background_color": (IO.STRING, {"default": "white"}),
+                "foreground_color": (IO.STRING, {"default": "black"}),
+                "font_name": (IO.STRING, {"default": "Arial"}),
             },
             "optional": {
-                "image": ("IMAGE", {
+                "image": (IO.IMAGE, {
                     "tooltip": "Image, leave unconnected when using a mask"}),
-                "mask": ("MASK", {
+                "mask": (IO.MASK, {
                     "tooltip": "Mask to be used as image, leave unconnected when using an image"}),
             }
         }
 
-    RETURN_TYPES = ("IMAGE",)
+    RETURN_TYPES = (IO.IMAGE,)
     FUNCTION = "add_label"
     CATEGORY = BASE_CATEGORY + "/" + MANIPULATION_CATEGORY
     DESCRIPTION = ("Adds a text label to an image")

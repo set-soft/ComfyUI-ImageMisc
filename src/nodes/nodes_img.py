@@ -10,7 +10,6 @@
 from collections import defaultdict
 from copy import deepcopy
 import csv
-from inspect import cleandoc
 import numpy as np
 import os
 from pathlib import Path
@@ -2682,47 +2681,3 @@ class ImageWithTextLabel:
 
         # Stack the processed images back into a single tensor
         return (torch.cat(output_images, dim=0),)
-
-
-class InputDir(ComfyNodeABC):
-    """
-    Returns the ComfyUI input path.
-
-    This is where input images are usually stored when using ComfyUI
-    """
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {}
-
-    RETURN_TYPES = (IO.STRING,)
-    RETURN_NAMES = ("input_path",)
-    CATEGORY = "Basic/Path"
-    DESCRIPTION = cleandoc(__doc__ or "")
-    FUNCTION = "execute"
-    UNIQUE_NAME = "SET_InputDir"
-    DISPLAY_NAME = "Get ComfyUI Input Path"
-
-    def execute(self) -> tuple[str]:
-        return (get_input_directory(),)
-
-
-class OutputDir(ComfyNodeABC):
-    """
-    Returns the ComfyUI output path.
-
-    This is where output images are usually stored when using ComfyUI
-    """
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {}
-
-    RETURN_TYPES = (IO.STRING,)
-    RETURN_NAMES = ("output_path",)
-    CATEGORY = "Basic/Path"
-    DESCRIPTION = cleandoc(__doc__ or "")
-    FUNCTION = "execute"
-    UNIQUE_NAME = "SET_OutputDir"
-    DISPLAY_NAME = "Get ComfyUI Output Path"
-
-    def execute(self) -> tuple[str]:
-        return (get_output_directory(),)

@@ -29,20 +29,20 @@ def empty_image(b=0, h=64, w=64, c=1):
     return torch.zeros(dims, dtype=torch.float32, device="cpu")
 
 
-def upscale(image, width, height, upscale_method):
+def upscale(image, width, height, upscale_method, crop="disabled"):
     # return F.interpolate(image, size=(height, width), mode=upscale_method)
-    return common_upscale(image, width, height, upscale_method, crop="disabled")
+    return common_upscale(image, width, height, upscale_method, crop=crop)
 
 
 def upscale_comfy(image, width, height, upscale_method, crop="disabled"):
-    if image.dim == 3:
+    if image.dim() == 3:
         # A mask
         if upscale_method == "lanczos":
             # Lanczos needs an RGB image
-            return upscale(image.unsqueeze(1).repeat(1, 3, 1, 1), width, height, upscale_method,
-                           crop=crop).movedim(1, -1)[:, :, :, 0]
+            return common_upscale(image.unsqueeze(1).repeat(1, 3, 1, 1), width, height, upscale_method,
+                                  crop=crop).movedim(1, -1)[:, :, :, 0]
         else:
-            return upscale(image.unsqueeze(1), width, height, upscale_method, crop=crop).squeeze(1)
+            return common_upscale(image.unsqueeze(1), width, height, upscale_method, crop=crop).squeeze(1)
     return common_upscale(image.movedim(-1, 1), width, height, upscale_method, crop=crop).movedim(1, -1)
 
 

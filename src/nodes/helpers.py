@@ -238,6 +238,7 @@ def load_images_wrapper(file_names, embed_transparency=False, disp_names=None, s
 
     imgs = []
     masks = []
+    is_mask = channel is not None
     used_file_names = []
     all_preview_imgs = []
     total = len(file_names)
@@ -255,7 +256,7 @@ def load_images_wrapper(file_names, embed_transparency=False, disp_names=None, s
                 file_name = file_names[i+j]
                 disp_name = disp_names[i+j]
 
-                if channel is not None:
+                if is_mask:
                     # A mask
                     mask, file_name = load_one_mask(file_name, disp_name, channel)
                 else:
@@ -295,7 +296,7 @@ def load_images_wrapper(file_names, embed_transparency=False, disp_names=None, s
             # Add a single image
             file_name = file_names[i]
 
-            if channel is not None:
+            if is_mask:
                 # A mask
                 mask, file_name = load_one_mask(file_name, disp_names[i], channel)
             else:
@@ -309,7 +310,7 @@ def load_images_wrapper(file_names, embed_transparency=False, disp_names=None, s
                 all_preview_imgs.append(get_image_preview_info(file_name))
 
     logger.debug(f"Loaded {len(masks)} batches:")
-    for n, i in enumerate(imgs):
+    for n, i in enumerate(masks):
         logger.debug(f"{n}) {i.shape}")
 
     result = (imgs, masks, used_file_names) if channel is None else (masks, used_file_names)

@@ -239,6 +239,10 @@ def sort_by(items, base_path='.', method=None, random_seed=1):
 
 
 class ImageDownload(ComfyNodeABC):
+    """
+    Downloads an image to ComfyUI's 'input' directory if it doesn't exist.
+    Then loads it using the built-in LoadImage logic.
+    """
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -270,8 +274,6 @@ class ImageDownload(ComfyNodeABC):
     RETURN_NAMES = ("image", "alpha_mask", "file_name")
     FUNCTION = "load_or_download_image"
     CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
-    DESCRIPTION = ("Downloads an image to ComfyUI's 'input' directory if it doesn't exist, then loads it using the "
-                   "built-in LoadImage logic.")
     UNIQUE_NAME = "SET_ImageDownload"
     DISPLAY_NAME = "Image Download and Load"
     # This node stores a result to disk. So this IS an output node.
@@ -318,6 +320,7 @@ class ImageDownload(ComfyNodeABC):
 
 
 class ImageLoad(ComfyNodeABC):
+    """ Loads an image from any path """
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -343,7 +346,6 @@ class ImageLoad(ComfyNodeABC):
     OUTPUT_IS_LIST = (True, True, True)
     FUNCTION = "execute"
     CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
-    DESCRIPTION = ("Loads an image from any path")
     UNIQUE_NAME = "SET_ImageLoad"
     DISPLAY_NAME = "Load Image from Path"
     INPUT_IS_LIST = True
@@ -358,6 +360,7 @@ class ImageLoad(ComfyNodeABC):
 
 
 class MaskLoad(ComfyNodeABC):
+    """ Loads an image from any path using it as a mask """
     _color_channels = ["red", "green", "blue", "alpha"]
 
     @classmethod
@@ -385,7 +388,6 @@ class MaskLoad(ComfyNodeABC):
     OUTPUT_IS_LIST = (True, True)
     FUNCTION = "execute"
     CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
-    DESCRIPTION = ("Loads an image from any path using it as a mask")
     UNIQUE_NAME = "SET_MaskLoad"
     DISPLAY_NAME = "Load Mask from Path"
     INPUT_IS_LIST = True
@@ -400,6 +402,7 @@ class MaskLoad(ComfyNodeABC):
 
 
 class ImageSave(ComfyNodeABC):
+    """ Saves an image to an arbitrary path """
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -425,7 +428,6 @@ class ImageSave(ComfyNodeABC):
     INPUT_IS_LIST = True
 
     CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
-    DESCRIPTION = ("Saves an image to an arbitrary path")
     UNIQUE_NAME = "SET_ImageSave"
     DISPLAY_NAME = "Save Image to Path"
 
@@ -446,6 +448,7 @@ class ImageSave(ComfyNodeABC):
 
 
 class MaskSave(ComfyNodeABC):
+    """ Saves a mask to an arbitrary path """
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -465,7 +468,6 @@ class MaskSave(ComfyNodeABC):
     INPUT_IS_LIST = True
 
     CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
-    DESCRIPTION = ("Saves a mask to an arbitrary path")
     UNIQUE_NAME = "SET_MaskSave"
     DISPLAY_NAME = "Save Mask to Path"
 
@@ -667,7 +669,7 @@ class ImageDataset(ComfyNodeABC):
 
 class MaskDifference(ComfyNodeABC):
     """
-    A ComfyUI node to compare two MASKs (grayscale images).
+    Compares two MASKs (grayscale images).
     The output is a color IMAGE visualizing the difference.
 
     Modes:
@@ -733,6 +735,9 @@ class MaskDifference(ComfyNodeABC):
 
 
 class SaliencyEvaluationMetrics(ComfyNodeABC):
+    """
+    Computes popular metrics to evaluate Salient Object Detection methods.
+    """
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -950,6 +955,12 @@ class SaliencyEvaluationMetrics(ComfyNodeABC):
 
 
 class ConsolidateMetrics(ComfyNodeABC):
+    """
+    Consolidates new metrics with the ones already computed
+
+    This node reads the `destination` CSV and adds the metrics from `metrics`.
+    Each row starts with the `img_name` corresponding for the metrics.
+    """
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -1153,6 +1164,11 @@ class ConsolidateMetrics(ComfyNodeABC):
 
 
 class PlotMetricCurvesPIL(ComfyNodeABC):
+    """
+    Plots the Precision vs Recall and F-measure curves
+
+    Generates two images containing the curves from the consolidated `metrics`
+    """
     # Define available colors for the plot line
     COLORS = ['blue', 'green', 'red', 'cyan', 'magenta', 'black']
 
@@ -1413,7 +1429,9 @@ class PlotMetricCurvesPIL(ComfyNodeABC):
 
 class CompositeFace(ComfyNodeABC):
     """
-    A ComfyUI node to composite (paste) animated face crops back onto reference images.
+    Inserts the `animated` face in the `reference` images at the `bboxes` coordinates.
+
+    Composite (paste) animated face crops back onto reference images.
     It handles a M-to-N relationship, where M reference images and bboxes correspond
     to M*N animated face images.
     """
@@ -1432,7 +1450,6 @@ class CompositeFace(ComfyNodeABC):
     FUNCTION = "composite"
 
     CATEGORY = BASE_CATEGORY + "/" + MANIPULATION_CATEGORY
-    DESCRIPTION = ("Inserts the `animated` face in the `reference` images at the `bboxes` coordinates.")
     UNIQUE_NAME = "SET_CompositeFace"
     DISPLAY_NAME = "Face Composite"
 
@@ -1507,7 +1524,9 @@ class CompositeFace(ComfyNodeABC):
 
 class CompositeFaceFrameByFrame(CompositeFace):
     """
-    A ComfyUI node to composite animated frames onto reference frames on a 1-to-1 basis.
+    Inserts the `animated` face in the `reference` video at the `bboxes` coordinates.
+
+    Composite animated frames onto reference frames on a 1-to-1 basis.
     It expects the 'animated' and 'reference' batches to have the same number of frames.
     It uses the *first* bounding box from the 'bboxes' input for all frames.
     """
@@ -1522,7 +1541,6 @@ class CompositeFaceFrameByFrame(CompositeFace):
         }
 
     CATEGORY = BASE_CATEGORY + "/" + MANIPULATION_CATEGORY
-    DESCRIPTION = ("Inserts the `animated` face in the `reference` video at the `bboxes` coordinates.")
     UNIQUE_NAME = "SET_CompositeFaceFrameByFrame"
     DISPLAY_NAME = "Face Composite (frame by frame)"
 
@@ -1583,7 +1601,9 @@ class CompositeFaceFrameByFrame(CompositeFace):
 
 class NormalizeToImageNetDataset(ComfyNodeABC):
     """
-    A ComfyUI node to normalize the values to the mean/std of the ImageNet dataset
+    Normalize the image to the ImageNet dataset
+
+    Note that this is statistical.
     """
     @classmethod
     def INPUT_TYPES(cls):
@@ -1596,7 +1616,6 @@ class NormalizeToImageNetDataset(ComfyNodeABC):
     RETURN_NAMES = ("image",)
     FUNCTION = "normalize"
     CATEGORY = BASE_CATEGORY + "/" + NORMALIZATION
-    DESCRIPTION = ("Normalize the image to the ImageNet dataset")
     UNIQUE_NAME = "SET_NormalizeToImageNetDataset"
     DISPLAY_NAME = "Normalize Image to ImageNet"
 
@@ -1608,7 +1627,9 @@ class NormalizeToImageNetDataset(ComfyNodeABC):
 
 class NormalizeToRangeMinus05to05(ComfyNodeABC):
     """
-    A ComfyUI node to normalize the values to the [-0.5, 0.5] range
+    Normalize the image to the [-0.5, 0.5] range
+
+    Note that this is statistical.
     """
     @classmethod
     def INPUT_TYPES(cls):
@@ -1617,7 +1638,6 @@ class NormalizeToRangeMinus05to05(ComfyNodeABC):
     RETURN_NAMES = ("image",)
     FUNCTION = "normalize"
     CATEGORY = BASE_CATEGORY + "/" + NORMALIZATION
-    DESCRIPTION = ("Normalize the image to [-0.5, 0.5]")
     UNIQUE_NAME = "SET_NormalizeToRangeMinus05to05"
     DISPLAY_NAME = "Normalize Image to [-0.5, 0.5]"
 
@@ -1629,7 +1649,9 @@ class NormalizeToRangeMinus05to05(ComfyNodeABC):
 
 class NormalizeToRangeMinus1to1(ComfyNodeABC):
     """
-    A ComfyUI node to normalize the values to the [-1, 1] range
+    Normalize the image to the [-1, 1] range
+
+    Note that this is statistical.
     """
     @classmethod
     def INPUT_TYPES(cls):
@@ -1638,7 +1660,6 @@ class NormalizeToRangeMinus1to1(ComfyNodeABC):
     RETURN_NAMES = ("image",)
     FUNCTION = "normalize"
     CATEGORY = BASE_CATEGORY + "/" + NORMALIZATION
-    DESCRIPTION = ("Normalize the image to [-1, 1]")
     UNIQUE_NAME = "SET_NormalizeToRangeMinus1to1"
     DISPLAY_NAME = "Normalize Image to [-1, 1] (i.e. GAN)"
 
@@ -1650,7 +1671,9 @@ class NormalizeToRangeMinus1to1(ComfyNodeABC):
 
 class NormalizeArbitrary(ComfyNodeABC):
     """
-    A ComfyUI node to normalize the values to arbitrary mean/std
+    Nnormalize the image to arbitrary mean/std, provided in `parameters`
+
+    Note that this is statistical.
     """
     @classmethod
     def INPUT_TYPES(cls):
@@ -1664,7 +1687,6 @@ class NormalizeArbitrary(ComfyNodeABC):
     RETURN_NAMES = ("image",)
     FUNCTION = "normalize"
     CATEGORY = BASE_CATEGORY + "/" + NORMALIZATION
-    DESCRIPTION = ("Normalize the image to the provided parameters")
     UNIQUE_NAME = "SET_NormalizeArbitrary"
     DISPLAY_NAME = "Arbitrary Normalize"
 
@@ -1675,6 +1697,7 @@ class NormalizeArbitrary(ComfyNodeABC):
 
 
 class NormalizeParameters(ComfyNodeABC):
+    """ Parameters for the arbitrary normalization """
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -1691,7 +1714,6 @@ class NormalizeParameters(ComfyNodeABC):
     RETURN_NAMES = ("parameters",)
     FUNCTION = "normalize"
     CATEGORY = BASE_CATEGORY + "/" + NORMALIZATION
-    DESCRIPTION = ("Parameters for the arbitrary normalization")
     UNIQUE_NAME = "SET_NormalizeParameters"
     DISPLAY_NAME = "Normalize Parameters"
 
@@ -1700,6 +1722,10 @@ class NormalizeParameters(ComfyNodeABC):
 
 
 class ApplyMaskAFFCE(ComfyNodeABC):
+    """
+    Apply a mask to an image using `Approximate Fast Foreground Colour Estimation`.
+    See: https://github.com/Photoroom/fast-foreground-estimation
+    """
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -1726,9 +1752,6 @@ class ApplyMaskAFFCE(ComfyNodeABC):
     RETURN_NAMES = ("image", "mask",)
     FUNCTION = "get_foreground"
     CATEGORY = BASE_CATEGORY + "/" + MANIPULATION_CATEGORY
-    DESCRIPTION = ("Apply a mask to an image using\n"
-                   "Approximate Fast Foreground Colour Estimation.\n"
-                   "https://github.com/Photoroom/fast-foreground-estimation")
     UNIQUE_NAME = "SET_ApplyMaskAFFCE"
     DISPLAY_NAME = "Apply Mask using AFFCE"
 
@@ -1739,6 +1762,10 @@ class ApplyMaskAFFCE(ComfyNodeABC):
 
 
 class AFFCE(ComfyNodeABC):
+    """
+    Estimate the foreground image using `Approximate Fast Foreground Colour Estimation`.
+    See: https://github.com/Photoroom/fast-foreground-estimation
+    """
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -1759,9 +1786,6 @@ class AFFCE(ComfyNodeABC):
     RETURN_NAMES = ("foreground", "mask",)
     FUNCTION = "get_foreground"
     CATEGORY = BASE_CATEGORY + "/" + FOREGROUND
-    DESCRIPTION = ("Estimate the foreground image using\n"
-                   "Approximate Fast Foreground Colour Estimation.\n"
-                   "https://github.com/Photoroom/fast-foreground-estimation")
     UNIQUE_NAME = "SET_AFFCE"
     DISPLAY_NAME = "Estimate foreground (AFFCE)"
 
@@ -1777,11 +1801,12 @@ class AFFCE(ComfyNodeABC):
 
 class FMLFE(ComfyNodeABC):
     """
-    A ComfyUI node that uses the Fast Multi-Level Foreground Estimation algorithm
-    to produce a high-quality foreground and background separation. It can
-    intelligently select the best available backend (CuPy, OpenCL, Numba, or PyTorch).
-    """
+    Estimate the foreground image using `Fast Multi-Level Foreground Estimation`
 
+    Uses the Fast Multi-Level Foreground Estimation algorithm
+    to produce a high-quality foreground and background separation.
+    It can intelligently select the best available backend (CuPy, OpenCL, Numba, or PyTorch).
+    """
     @classmethod
     def INPUT_TYPES(cls):
         # Create the dropdown list for the implementation choice
@@ -1854,8 +1879,6 @@ class FMLFE(ComfyNodeABC):
     RETURN_NAMES = ("foreground", "background", "mask")
     FUNCTION = "estimate"
     CATEGORY = BASE_CATEGORY + "/" + FOREGROUND
-    DESCRIPTION = ("Estimate the foreground image using\n"
-                   "Fast Multi-Level Foreground Estimation.")
     UNIQUE_NAME = "SET_FMLFE"
     DISPLAY_NAME = "Estimate foreground (FMLFE)"
 
@@ -1887,8 +1910,9 @@ class FMLFE(ComfyNodeABC):
 
 class CreateEmptyImage(ComfyNodeABC):
     """
-    A ComfyUI node to create a solid-color image tensor.
-    The output dimensions can be specified manually or inherited from an optional input image.
+    Create a solid-color image.
+
+    The output dimensions can be specified manually or inherited from an optional input image (`reference`).
     """
     @classmethod
     def INPUT_TYPES(cls):
@@ -1929,8 +1953,6 @@ class CreateEmptyImage(ComfyNodeABC):
     RETURN_NAMES = ("image",)
     FUNCTION = "create_image"
     CATEGORY = BASE_CATEGORY + "/generation"
-    DESCRIPTION = ("Create a solid-color image.\n"
-                   "If the optional image is provides uses its shape.")
     UNIQUE_NAME = "SET_CreateEmptyImage"
     DISPLAY_NAME = "Create Empty Image"
 
@@ -1962,6 +1984,11 @@ class CreateEmptyImage(ComfyNodeABC):
 # - Added control over the transparency of the padded area (pad_transparency)
 # - Handle RGBA images
 class ImagePad(ComfyNodeABC):
+    """
+    Pad the input image and optionally mask with the specified padding.
+
+    The `target_width`/`target_height` overrides `left`, `right`, `top` and `bottom` values.
+    """
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -1987,8 +2014,6 @@ class ImagePad(ComfyNodeABC):
     RETURN_NAMES = ("images", "masks",)
     FUNCTION = "pad"
     CATEGORY = BASE_CATEGORY + "/" + MANIPULATION_CATEGORY
-    DESCRIPTION = ("Pad the input image and optionally mask with the specified padding.\n"
-                   "The `target_width`/`target_height` overrides left, right, top and bottom.")
     UNIQUE_NAME = "SET_ImagePad"
     DISPLAY_NAME = "Pad Image (KJ/SET)"
 
@@ -2157,7 +2182,11 @@ class ImagePad(ComfyNodeABC):
 # - Added control over the transparency of the padded area
 class ImageResize(ComfyNodeABC):
     """
-    A resize and crop node, from ImageResizeKJv2
+    Resizes the image to the specified width and height
+
+    Size can be retrieved from the input (when w=h=0) or a reference image.
+
+    Keep proportions keeps the aspect ratio of the image, by highest dimension.
     """
     @classmethod
     def INPUT_TYPES(s):
@@ -2198,10 +2227,6 @@ class ImageResize(ComfyNodeABC):
     RETURN_NAMES = ("IMAGE", "width", "height", "mask",)
     FUNCTION = "resize"
     CATEGORY = BASE_CATEGORY + "/" + MANIPULATION_CATEGORY
-    DESCRIPTION = ("Resizes the image to the specified width and height.\n"
-                   "Size can be retrieved from the input (when w=h=0) or a reference image.\n\n"
-                   "Keep proportions keeps the aspect ratio of the image, by\n"
-                   "highest dimension.")
     UNIQUE_NAME = "SET_ImageResize"
     DISPLAY_NAME = "Resize Image (KJ/SET)"
 
@@ -2405,6 +2430,9 @@ class ImageResize(ComfyNodeABC):
 # Adapted from KJNodes, credits to Kijai
 # Difference: reference image `get_image_size`
 class ResizeMask(ComfyNodeABC):
+    """
+    Resizes the mask or batch of masks to the specified width and height.
+    """
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -2425,7 +2453,6 @@ class ResizeMask(ComfyNodeABC):
     RETURN_NAMES = ("mask", "width", "height",)
     FUNCTION = "resize"
     CATEGORY = BASE_CATEGORY + "/" + MANIPULATION_CATEGORY
-    DESCRIPTION = "Resizes the mask or batch of masks to the specified width and height."
     UNIQUE_NAME = "SET_ResizeMask"
     DISPLAY_NAME = "Resize Mask (KJ/SET)"
 
@@ -2478,6 +2505,7 @@ def load_font(font_name, font_size):
 
 
 class ImageWithTextLabel(ComfyNodeABC):
+    """ Adds a text label to an image """
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -2507,7 +2535,6 @@ class ImageWithTextLabel(ComfyNodeABC):
     RETURN_TYPES = (IO.IMAGE,)
     FUNCTION = "add_label"
     CATEGORY = BASE_CATEGORY + "/" + MANIPULATION_CATEGORY
-    DESCRIPTION = ("Adds a text label to an image")
     UNIQUE_NAME = "SET_ImageWithTextLabel"
     DISPLAY_NAME = "Image with text label, good for comparison grids"
 

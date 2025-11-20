@@ -536,6 +536,10 @@ class ImageDataset(ComfyNodeABC):
                     "max": MAX_FILES,
                     "tooltip": "Random seed used for the random sorting"
                 }),
+                "block_when_finished": (IO.BOOLEAN, {
+                    "default": True,
+                    "tooltip": "Block the execution when all images are processed"
+                }),
             }
         }
 
@@ -554,14 +558,16 @@ class ImageDataset(ComfyNodeABC):
 
     @classmethod
     def IS_CHANGED(cls, source, pattern, destination, dest_ext, reference=None, sort_method="None",
-                   image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1):
+                   image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1,
+                   block_when_finished=False):
         # We always indicate an evaluation is needed.
         # 1) We must check the directory to know it, so we don't have any advantage on doing it now.
         # 2) ComfyUI makes any check impossible, if source is connected to a node it will be None
         return float("NaN")
 
     def execute(self, source, pattern, destination, dest_ext, reference=None, sort_method="None",
-                image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1):
+                image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1,
+                block_when_finished=False):
         # Here self isn't really needed, our state is the filesystem
         source_dir = Path(get_input_directory(), source)
         dest_dir = Path(get_output_directory(), destination)
@@ -650,7 +656,10 @@ class ImageDataset(ComfyNodeABC):
 
         if not len(images):
             logger.info("All images processed")
-            return ([ExecutionBlocker("No more images to process")], [ExecutionBlocker(None)], [ExecutionBlocker(None)])
+            if block_when_finished:
+                return ([ExecutionBlocker("No more images to process")], [ExecutionBlocker(None)], [ExecutionBlocker(None)])
+            else:
+                return ([None], [None], [None])
 
         cur_len = len(images)
         total = n_files

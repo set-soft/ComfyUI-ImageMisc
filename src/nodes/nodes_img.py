@@ -118,8 +118,12 @@ def tensor_to_pil(tensor: torch.Tensor) -> Image.Image:
 
 def pil_to_tensor(pil_image: Image.Image) -> torch.Tensor:
     """Converts a Pillow Image to a tensor (H, W, C) [0, 1]."""
-    np_image = np.array(pil_image).astype(np.float32) / 255.0
-    return torch.from_numpy(np_image)
+    return torch.from_numpy(np.array(pil_image).astype(np.float32) / 255.0)
+
+
+def pil_to_tensor_B(pil_image: Image.Image) -> torch.Tensor:
+    """Converts a Pillow Image to a tensor (1, H, W, C) [0, 1]."""
+    return pil_to_tensor(pil_image).unsqueeze(0)
 
 
 def parse_size(size_str, reference_dim):
@@ -1216,11 +1220,6 @@ class PlotMetricCurvesPIL(ComfyNodeABC):
     UNIQUE_NAME = "SET_PlotMetricCurvesPIL"
     DISPLAY_NAME = "Plot SOD metric curves"
 
-    def _pil_to_tensor(self, pil_image):
-        """Converts a PIL Image to a ComfyUI-compatible IMAGE tensor."""
-        # Convert to numpy array, normalize to [0, 1], and add batch dimension
-        return torch.from_numpy(np.array(pil_image).astype(np.float32) / 255.0).unsqueeze(0)
-
     def _get_nice_ticks(self, min_val, max_val, max_ticks=12):
         """
         Calculates 'nice' tick locations for a graph axis, similar to matplotlib.
@@ -1500,7 +1499,7 @@ class PlotMetricCurvesPIL(ComfyNodeABC):
 
         if not metrics:
             logger.warning("No metrics data provided. Returning blank images.")
-            blank_image = self._pil_to_tensor(Image.new('RGB', (width[0], height[0]), 'white'))
+            blank_image = pil_to_tensor_B(Image.new('RGB', (width[0], height[0]), 'white'))
             return (blank_image, blank_image)
 
         # --- Normalize Input to List of Datasets ---
@@ -1577,7 +1576,7 @@ class PlotMetricCurvesPIL(ComfyNodeABC):
 
         if not pr_curves_data:
             logger.warning("Metrics data did not contain F/FP/FR keys. Returning blank images.")
-            blank_image = self._pil_to_tensor(Image.new('RGB', (width[0], height[0]), 'white'))
+            blank_image = pil_to_tensor_B(Image.new('RGB', (width[0], height[0]), 'white'))
             return (blank_image, blank_image)
 
         # Determine limits
@@ -1597,7 +1596,7 @@ class PlotMetricCurvesPIL(ComfyNodeABC):
             width=width[0], height=height[0],
             x_lim=pr_x_lim, y_lim=pr_y_lim
         )
-        pr_plot_tensor = self._pil_to_tensor(pr_plot_pil)
+        pr_plot_tensor = pil_to_tensor_B(pr_plot_pil)
 
         # --- Generate F-Measure Curve Plot ---
         # F-measure is always 0-255 on X and 0-1 on Y
@@ -1607,7 +1606,7 @@ class PlotMetricCurvesPIL(ComfyNodeABC):
             width=width[0], height=height[0],
             x_lim=(0, F_POINTS), y_lim=(0.0, 1.0)
         )
-        fm_plot_tensor = self._pil_to_tensor(fm_plot_pil)
+        fm_plot_tensor = pil_to_tensor_B(fm_plot_pil)
 
         return (pr_plot_tensor, fm_plot_tensor)
 
@@ -2858,7 +2857,7 @@ class ImageWithTextLabel(ComfyNodeABC):
                     direction="ttb"  # Top-to-bottom direction
                 )
 
-            output_images.append(pil_to_tensor(canvas).unsqueeze(0))
+            output_images.append(pil_to_tensor_B(canvas))
 
         # Stack the processed images back into a single tensor
         return (torch.cat(output_images, dim=0),)

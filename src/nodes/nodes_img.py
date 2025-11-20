@@ -2123,7 +2123,7 @@ class ImagePad(ComfyNodeABC):
         return (out_image, out_masks)
 
 
-# Adapted from KJNodes, credits to Kijai
+# Adapted from KJNodes, credits to Kijai (ImageResizeKJv2)
 # Differences:
 # - The color is an string that support various formats
 # - We can copy the size of a reference image (found in V1, not in V2)

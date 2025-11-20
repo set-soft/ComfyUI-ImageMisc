@@ -2307,7 +2307,7 @@ class ImageResize(ComfyNodeABC):
                     out_mask = out_mask.narrow(-1, x, crop_w).narrow(-2, y, crop_h)
 
             # Resize the image
-            out_image = upscale_comfy(out_image.movedim, width, height, upscale_method)
+            out_image = upscale_comfy(out_image, width, height, upscale_method)
 
             if out_mask is not None:
                 out_mask = upscale_comfy(out_mask, width, height, upscale_method)

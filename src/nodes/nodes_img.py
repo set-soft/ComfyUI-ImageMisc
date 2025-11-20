@@ -1025,27 +1025,7 @@ class ConsolidateMetrics(ComfyNodeABC):
                 data_col_idx += 1
         return metric_values
 
-    def execute(self, metrics, img_name, destination):
-        # --- 1. Input Validation and Flattening ---
-
-        if metrics[0] is None or img_name[0] is None or destination[0] is None:
-            return ({}, )
-
-        if len(metrics) != len(img_name):
-            raise ValueError(f"Got {len(metrics)} metrics and {len(img_name)} file names. They must match.")
-        if len(destination) != 1:
-            raise ValueError("Only one `destination` is accepted.")
-
-        # Resolve the final destination path for the CSV file.
-        dest_path = Path(get_output_directory(), destination[0])
-        if dest_path.is_dir():
-            dest_path = dest_path / 'consolidated.csv'
-
-        # Ensure the parent directory exists.
-        dest_path.parent.mkdir(exist_ok=True)
-
-        # --- 2. Load Existing Data from CSV (if it exists) ---
-
+    def load_current_data(self, dest_path):
         existing_data = {}
         header = []
         metric_keys_ordered = []
@@ -1086,6 +1066,37 @@ class ConsolidateMetrics(ComfyNodeABC):
             except (IOError, StopIteration, IndexError, ValueError) as e:
                 logger.warning(f"Could not properly read existing file at {dest_path}. It will be overwritten. Error: {e}")
                 existing_data = {}  # Reset on read error
+
+        return existing_data, header, metric_keys_ordered
+
+    def execute(self, metrics, img_name, destination):
+        # --- 1. Input Validation and Flattening ---
+
+        if destination[0] is None:
+            # We don't even know where to consolidate data
+            return ({}, )
+
+        # Resolve the final destination path for the CSV file.
+        dest_path = Path(get_output_directory(), destination[0])
+        if dest_path.is_dir():
+            dest_path = dest_path / 'consolidated.csv'
+
+        if metrics[0] is None or img_name[0] is None:
+            # This is normal when all images are processed and we aren't blocking
+            # In this case return what we already have on disk
+            existing_data, header, metric_keys_ordered = self.load_current_data(dest_path)
+            return ([v for v in existing_data.values()], )
+
+        if len(metrics) != len(img_name):
+            raise ValueError(f"Got {len(metrics)} metrics and {len(img_name)} file names. They must match.")
+        if len(destination) != 1:
+            raise ValueError("Only one `destination` is accepted.")
+
+        # Ensure the parent directory exists.
+        dest_path.parent.mkdir(exist_ok=True)
+
+        # --- 2. Load Existing Data from CSV (if it exists) ---
+        existing_data, header, metric_keys_ordered = self.load_current_data(dest_path)
 
         # --- 3. Consolidate New Metrics ---
 

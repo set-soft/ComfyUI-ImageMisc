@@ -572,6 +572,8 @@ class ImageDataset(ComfyNodeABC):
     def execute(self, source, pattern, destination, dest_ext, reference=None, sort_method="None",
                 image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1,
                 block_when_finished=False):
+        logger.debug(f"ImageDataset.source = {source}")
+        logger.debug(f"ImageDataset.destination = {destination}")
         # Here self isn't really needed, our state is the filesystem
         source_dir = Path(get_input_directory(), source)
         dest_dir = Path(get_output_directory(), destination)
@@ -848,7 +850,9 @@ class SaliencyEvaluationMetrics(ComfyNodeABC):
 
             for i in range(gt.shape[0]):
                 if img_name[index_name] is None:
-                    return ([None], img_name, None, None, None, None, None)
+                    # return ([None], img_name, None, None, None, None, None)
+                    all.append(None)
+                    continue
                 # Get the next name
                 imgp = Path(img_name[index_name])
                 index_name += 1
@@ -1074,14 +1078,40 @@ class ConsolidateMetrics(ComfyNodeABC):
         return existing_data, header, metric_keys_ordered
 
     def execute(self, metrics, img_name, destination):
+        n_metrics = len(metrics)
+        n_img_name = len(img_name)
+        n_destination = len(destination)
+
+        logger.debug(f"metrics: {n_metrics}")
+        logger.debug(f"img_name: {n_img_name} {img_name}")
+        logger.debug(f"destination: {n_destination} {destination}")
+
+        # Sanity check
+        if n_destination == 0:
+            raise ValueError("Destination list cannot be empty.")
+        if n_metrics != n_img_name:
+            raise ValueError(f"Got {n_metrics} metrics and {n_img_name} file names. They must match.")
+        if n_metrics % n_destination != 0:
+            raise ValueError(f"Got {n_metrics} metrics and {n_destination} destinations. They must be multiples.")
+        slice_size = n_metrics // n_destination
+
+        res = []
+        for c, d in enumerate(destination):
+            start = c * slice_size
+            end = start + slice_size
+            res.append(self.consolidate(metrics[start:end], img_name[start:end], d))
+
+        return (res, )
+
+    def consolidate(self, metrics, img_name, destination):
         # --- 1. Input Validation and Flattening ---
 
-        if destination[0] is None:
+        if destination is None:
             # We don't even know where to consolidate data
-            return ({}, )
+            return [{}]
 
         # Resolve the final destination path for the CSV file.
-        dest_path = Path(get_output_directory(), destination[0])
+        dest_path = Path(get_output_directory(), destination)
         if dest_path.is_dir():
             dest_path = dest_path / 'consolidated.csv'
 
@@ -1089,12 +1119,7 @@ class ConsolidateMetrics(ComfyNodeABC):
             # This is normal when all images are processed and we aren't blocking
             # In this case return what we already have on disk
             existing_data, header, metric_keys_ordered = self.load_current_data(dest_path)
-            return ([v for v in existing_data.values()], )
-
-        if len(metrics) != len(img_name):
-            raise ValueError(f"Got {len(metrics)} metrics and {len(img_name)} file names. They must match.")
-        if len(destination) != 1:
-            raise ValueError("Only one `destination` is accepted.")
+            return [v for v in existing_data.values()]
 
         # Ensure the parent directory exists.
         dest_path.parent.mkdir(exist_ok=True)
@@ -1111,7 +1136,7 @@ class ConsolidateMetrics(ComfyNodeABC):
 
         if not existing_data:
             logger.warning("[Warning] No metrics to consolidate. Aborting file write.")
-            return ({}, )
+            return [{}]
 
         # --- 4. Prepare for Writing (Sort and Define Header if New) ---
 
@@ -1184,7 +1209,7 @@ class ConsolidateMetrics(ComfyNodeABC):
 
         logger.info(f"Metrics consolidated and saved to {dest_path}")
 
-        return ([v for v in existing_data.values()], )
+        return [v for v in existing_data.values()]
 
 
 # Most code from Gemini 3 Pro

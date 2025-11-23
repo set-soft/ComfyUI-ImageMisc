@@ -1516,24 +1516,11 @@ class PlotMetricCurvesPIL(ComfyNodeABC):
 
         return img
 
-    def execute(self, metrics, plot_title, curve_color, width, height, auto_scale, legend_labels=None):
-        # --- Aggregate Data (same as matplotlib version) ---
-        plot_title_str = plot_title[0]
-        color_str = curve_color[0]
-        auto_scale = auto_scale[0]
-
-        if not metrics:
+    def plot_one_dataset(self, datasets, plot_title_str, color_str, width, height, auto_scale, legend_labels):
+        if not datasets:
             logger.warning("No metrics data provided. Returning blank images.")
-            blank_image = pil_to_tensor_B(Image.new('RGB', (width[0], height[0]), 'white'))
+            blank_image = pil_to_tensor(Image.new('RGB', (width, height), 'white'))
             return (blank_image, blank_image)
-
-        # --- Normalize Input to List of Datasets ---
-        # Check if the input is a single dataset (List of Dicts) or multiple (List of Lists of Dicts)
-        # We assume if the first item is a dict, it's a single dataset.
-        if isinstance(metrics[0], dict):
-            datasets = [metrics]
-        else:
-            datasets = metrics
 
         # --- Prepare Colors ---
         colors = color_str.split()
@@ -1546,18 +1533,18 @@ class PlotMetricCurvesPIL(ComfyNodeABC):
                 colors += [colors[-1]] * (n_datasets - n_colors)
 
         # --- Prepare Labels ---
-        labels = None
-        if legend_labels is not None:
-            # Ensure it's a list and has enough entries
-            # legend_labels comes in as a list of strings usually if from a primitive
-            if isinstance(legend_labels, list):
-                labels = legend_labels
-            else:
-                labels = [legend_labels]  # Handle single string edge case
-
-            # Pad labels if fewer than datasets
-            if len(labels) < n_datasets:
-                labels += [f"Curve {i+1}" for i in range(len(labels), n_datasets)]
+        labels = legend_labels  # None
+#         if legend_labels is not None:
+#             # Ensure it's a list and has enough entries
+#             # legend_labels comes in as a list of strings usually if from a primitive
+#             if isinstance(legend_labels, list):
+#                 labels = legend_labels
+#             else:
+#                 labels = [legend_labels]  # Handle single string edge case
+#
+#             # Pad labels if fewer than datasets
+#             if len(labels) < n_datasets:
+#                 labels += [f"Curve {i+1}" for i in range(len(labels), n_datasets)]
 
         # --- Process Each Dataset ---
         pr_curves_data = []  # Will hold tuples: (x_data, y_data, color)
@@ -1601,7 +1588,7 @@ class PlotMetricCurvesPIL(ComfyNodeABC):
 
         if not pr_curves_data:
             logger.warning("Metrics data did not contain F/FP/FR keys. Returning blank images.")
-            blank_image = pil_to_tensor_B(Image.new('RGB', (width[0], height[0]), 'white'))
+            blank_image = pil_to_tensor(Image.new('RGB', (width, height), 'white'))
             return (blank_image, blank_image)
 
         # Determine limits
@@ -1618,22 +1605,87 @@ class PlotMetricCurvesPIL(ComfyNodeABC):
         pr_plot_pil = self._create_plot_with_pil(
             curves_data=pr_curves_data,
             title=f"{plot_title_str} (PR Curve)", x_label="Recall", y_label="Precision",
-            width=width[0], height=height[0],
+            width=width, height=height,
             x_lim=pr_x_lim, y_lim=pr_y_lim
         )
-        pr_plot_tensor = pil_to_tensor_B(pr_plot_pil)
+        pr_plot_tensor = pil_to_tensor(pr_plot_pil)
 
         # --- Generate F-Measure Curve Plot ---
         # F-measure is always 0-255 on X and 0-1 on Y
         fm_plot_pil = self._create_plot_with_pil(
             curves_data=fm_curves_data,
             title=f"{plot_title_str} (F-Measure Curve)", x_label="Threshold", y_label="F-measure",
-            width=width[0], height=height[0],
+            width=width, height=height,
             x_lim=(0, F_POINTS), y_lim=(0.0, 1.0)
         )
-        fm_plot_tensor = pil_to_tensor_B(fm_plot_pil)
+        fm_plot_tensor = pil_to_tensor(fm_plot_pil)
 
-        return (pr_plot_tensor, fm_plot_tensor)
+        return pr_plot_tensor, fm_plot_tensor
+
+    def normalize(self, param_name, param_values, n):
+        """ Ensure we have N values for a parameter """
+        got = len(param_values)
+        if got > n:
+            logger.warning(f"Got {got} {param_name} and {n} titles, discarding extra values")
+            return param_values[:n]
+        if got == 1:
+            return param_values * n
+        logger.warning(f"Got {got} {param_name} and {n} titles, repeating the last one")
+        return param_values + param_values[-1:] * (n - got)
+
+    def execute(self, metrics, plot_title, curve_color, width, height, auto_scale, legend_labels=None):
+        # --- Normalize Input to List of Datasets ---
+        # Check if the input is a single dataset (List of Dicts) or multiple (List of Lists of Dicts)
+        # We assume if the first item is a dict, it's a single dataset.
+        if isinstance(metrics[0], dict):
+            datasets = [metrics]
+        else:
+            datasets = metrics
+        n_datasets = len(datasets)
+        n_plot_title = len(plot_title)
+
+        # We will plot one PR/FM pair for each title.
+        # We assume each title will have the same number of metrics.
+        if n_datasets < n_plot_title:
+            msg = f"Too much titles ({n_plot_title}) for {n_datasets} metrics"
+            logger.error(msg)
+            raise ValueError(msg)
+        if n_datasets % n_plot_title != 0:
+            msg = f"Got {n_plot_title} titles for {n_datasets} metrics, must be multiples"
+            logger.error(msg)
+            raise ValueError(msg)
+        slice_size = n_datasets // n_plot_title
+
+        # Check the legend labels
+        if legend_labels is not None:
+            n_legend_labels = len(legend_labels)
+            if n_legend_labels < slice_size or (n_legend_labels > slice_size and n_legend_labels != n_datasets):
+                msg = f"Got {n_legend_labels} legend labels for {n_datasets} metrics"
+                logger.error(msg)
+                raise ValueError(msg)
+            if n_legend_labels != n_datasets:  # Here we know n_legend_labels == slice_size
+                # Repeat the same for all titles
+                legend_labels = legend_labels * n_plot_title
+
+        color = self.normalize("curve_color", curve_color, n_plot_title)
+        auto_scale = self.normalize("auto_scale", auto_scale, n_plot_title)
+        width = self.normalize("width", width, n_plot_title)
+        height = self.normalize("height", height, n_plot_title)
+
+        logger.debug(f"Generating plot for {n_datasets} metrics and {n_plot_title} titles")
+
+        prs = []
+        fms = []
+        for c, title in enumerate(plot_title):
+            logger.debug(f"- {title}")
+            start = c * slice_size
+            end = start + slice_size
+            pr, fm = self.plot_one_dataset(datasets[start:end], title, color[c], width[c], height[c], auto_scale[c],
+                                           legend_labels if legend_labels is None else legend_labels[start:end])
+            prs.append(pr)
+            fms.append(fm)
+
+        return (torch.stack(prs), torch.stack(fms))
 
 
 class CompositeFace(ComfyNodeABC):

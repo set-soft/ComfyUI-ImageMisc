@@ -2938,3 +2938,50 @@ class ImageWithTextLabel(ComfyNodeABC):
 
         # Stack the processed images back into a single tensor
         return (torch.cat(output_images, dim=0),)
+
+
+class CartesianProduct(ComfyNodeABC):
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "list_A": (IO.ANY, {"forceInput": True}),  # Accepts any list (Images, Latents, Strings)
+                "list_B": (IO.ANY, {"forceInput": True}),
+                "order": (["A_fast (A1, A2, A1...)", "B_fast (B1, B2, B1...)"],),
+            },
+        }
+
+    INPUT_IS_LIST = True
+    OUTPUT_IS_LIST = (True, True)
+
+    RETURN_TYPES = (IO.ANY, IO.ANY)
+    RETURN_NAMES = ("A_out", "B_out")
+
+    FUNCTION = "execute"
+    CATEGORY = BASE_CATEGORY + "/" + VALIDATION
+    UNIQUE_NAME = "SET_CartesianProduct"
+    DISPLAY_NAME = "Cartesian Product"
+
+    def execute(self, list_A, list_B, order):
+        # order[0] is just the "A_fast" or "B_fast" string
+        is_b_fast = order[0].startswith("B_fast")
+
+        res_A = []
+        res_B = []
+
+        if is_b_fast:
+            # Case: [A1, B1], [A1, B2], [A2, B1], [A2, B2]
+            # A stays the same for a while, B changes rapidly
+            for a in list_A:
+                for b in list_B:
+                    res_A.append(a)
+                    res_B.append(b)
+        else:
+            # Case: [A1, B1], [A2, B1], [A1, B2], [A2, B2]
+            # A changes rapidly, B stays the same for a while
+            for b in list_B:
+                for a in list_A:
+                    res_A.append(a)
+                    res_B.append(b)
+
+        return (res_A, res_B)

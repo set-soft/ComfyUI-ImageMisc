@@ -102,6 +102,8 @@ SOD_NAMES = {'mae': "MAE", 'max_f_mes': "Max F-measure", 'adp_f_mes': "Adp F-mea
 REVERSE_SOD_NAMES = {v: k for k, v in SOD_NAMES.items()}
 IS_VECT_NAME = re.compile(r"(F|FP|FR|E)\((\d+)\)")
 VECT_NAMES = {'e', 'f', 'fp', 'fr'}
+DATASET_NAMES = ['Fmax dataset', 'Fmean dataset', 'Emax dataset', 'Emean dataset']
+
 # A dictionary to cache loaded fonts
 font_cache = {}
 
@@ -160,7 +162,7 @@ def expand_header_keys(header):
             key = key.upper()
             h.extend([f"{key}({c})" for c in range(F_POINTS)])
         else:
-            h.append(SOD_NAMES[key])
+            h.append(SOD_NAMES.get(key, key))
     return h
 
 
@@ -990,6 +992,10 @@ class ConsolidateMetrics(ComfyNodeABC):
                                "If this is a directory the file\nwill be named `consolidated.csv` inside it"
                 }),
             },
+            "optional": {
+                "metric_ids": (IO.STRING, ),
+                "res_destination": (IO.STRING, ),
+            },
         }
 
     INPUT_IS_LIST = True
@@ -1028,7 +1034,7 @@ class ConsolidateMetrics(ComfyNodeABC):
                 # Read the single value from the current position.
                 scalar_str_value = row_data[data_col_idx]
                 # Convert to float and store it in the dictionary.
-                metric_values[key] = float(scalar_str_value)
+                metric_values[key] = float(scalar_str_value) if scalar_str_value else 0
                 # Advance the column index by one.
                 data_col_idx += 1
         return metric_values
@@ -1037,6 +1043,7 @@ class ConsolidateMetrics(ComfyNodeABC):
         existing_data = {}
         header = []
         metric_keys_ordered = []
+        totals = {}
 
         if dest_path.is_file():
             try:
@@ -1057,7 +1064,7 @@ class ConsolidateMetrics(ComfyNodeABC):
                             if index == "0":
                                 metric_keys_ordered.append(vect_name.lower())
                         else:
-                            metric_keys_ordered.append(REVERSE_SOD_NAMES.get(h))
+                            metric_keys_ordered.append(REVERSE_SOD_NAMES.get(h, h))
 
                     # Load existing rows, stopping at any blank line (which precedes totals).
                     for row in reader:
@@ -1071,16 +1078,29 @@ class ConsolidateMetrics(ComfyNodeABC):
                         metric_values = self.compact_row(row[1:], metric_keys_ordered)
                         existing_data[filename] = metric_values
 
+                    totals_row = next(reader, [''])
+                    if totals_row[0] == 'Total':
+                        totals = self.compact_row(totals_row[1:], metric_keys_ordered)
+
+                        for row in reader:
+                            if not row:
+                                continue
+                            if len(row) >= 2:
+                                totals[row[0]] = row[1]
+
             except (IOError, StopIteration, IndexError, ValueError) as e:
                 logger.warning(f"Could not properly read existing file at {dest_path}. It will be overwritten. Error: {e}")
+                raise
                 existing_data = {}  # Reset on read error
 
-        return existing_data, header, metric_keys_ordered
+        return existing_data, header, metric_keys_ordered, totals
 
-    def execute(self, metrics, img_name, destination):
+    def execute(self, metrics, img_name, destination, metric_ids=None, res_destination=None):
         n_metrics = len(metrics)
         n_img_name = len(img_name)
         n_destination = len(destination)
+        n_res_destination = 0 if res_destination is None else len(res_destination)
+        n_metric_ids = 0 if metric_ids is None else len(metric_ids)
 
         logger.debug(f"metrics: {n_metrics}")
         logger.debug(f"img_name: {n_img_name} {img_name}")
@@ -1093,13 +1113,24 @@ class ConsolidateMetrics(ComfyNodeABC):
             raise ValueError(f"Got {n_metrics} metrics and {n_img_name} file names. They must match.")
         if n_metrics % n_destination != 0:
             raise ValueError(f"Got {n_metrics} metrics and {n_destination} destinations. They must be multiples.")
+        if n_res_destination > 1:
+            raise ValueError(f"Only one resume destination currently supported, got {n_res_destination}")
+        if n_res_destination and n_metric_ids != n_metrics:
+            raise ValueError(f"Got {n_metrics} metrics and {n_metric_ids} metric IDs. They must match.")
         slice_size = n_metrics // n_destination
 
         res = []
+        totals = {}
         for c, d in enumerate(destination):
             start = c * slice_size
             end = start + slice_size
-            res.append(self.consolidate(metrics[start:end], img_name[start:end], d))
+            data, total = self.consolidate(metrics[start:end], img_name[start:end], d)
+            res.append(data)
+            if n_res_destination:
+                totals[metric_ids[c]] = total
+
+        if totals:
+            self.update_resume(res_destination[0], totals)
 
         return (res, )
 
@@ -1108,7 +1139,7 @@ class ConsolidateMetrics(ComfyNodeABC):
 
         if destination is None:
             # We don't even know where to consolidate data
-            return [{}]
+            return [{}], {}
 
         # Resolve the final destination path for the CSV file.
         dest_path = Path(get_output_directory(), destination)
@@ -1118,14 +1149,14 @@ class ConsolidateMetrics(ComfyNodeABC):
         if metrics[0] is None or img_name[0] is None:
             # This is normal when all images are processed and we aren't blocking
             # In this case return what we already have on disk
-            existing_data, header, metric_keys_ordered = self.load_current_data(dest_path)
-            return [v for v in existing_data.values()]
+            existing_data, header, metric_keys_ordered, totals = self.load_current_data(dest_path)
+            return [v for v in existing_data.values()], totals
 
         # Ensure the parent directory exists.
         dest_path.parent.mkdir(exist_ok=True)
 
         # --- 2. Load Existing Data from CSV (if it exists) ---
-        existing_data, header, metric_keys_ordered = self.load_current_data(dest_path)
+        existing_data, header, metric_keys_ordered, _ = self.load_current_data(dest_path)
 
         # --- 3. Consolidate New Metrics ---
 
@@ -1136,7 +1167,7 @@ class ConsolidateMetrics(ComfyNodeABC):
 
         if not existing_data:
             logger.warning("[Warning] No metrics to consolidate. Aborting file write.")
-            return [{}]
+            return [{}], {}
 
         # --- 4. Prepare for Writing (Sort and Define Header if New) ---
 
@@ -1191,25 +1222,80 @@ class ConsolidateMetrics(ComfyNodeABC):
             Fmax = averages.get('f').max() if 'f' in averages else 0.0
             Emax = averages.get('e').max() if 'e' in averages else 0.0
 
-            if Fmax or Fmax:
+            if Fmax or Emax:
                 writer.writerow([])
 
             if Fmax:
                 # This is the maximum for the average F-measure
                 # Is more representative for the dataset than the average of the maximums of each image
-                writer.writerow(['Fmax dataset', f"{Fmax:.4f}"])
+                key = 'Fmax dataset'
+                val = f"{Fmax:.4f}"
+                writer.writerow([key, val])
+                averages[key] = val
                 Ftot = averages.get('f').sum()
-                writer.writerow(['Fmean dataset', f"{Ftot/F_POINTS:.4f}"])
+                key = 'Fmean dataset'
+                val = f"{Ftot/F_POINTS:.4f}"
+                writer.writerow([key, val])
+                averages[key] = val
 
             # Do we have E(th)?
             if Emax:
-                writer.writerow(['Emax dataset', f"{Emax:.4f}"])
+                key = 'Emax dataset'
+                val = f"{Emax:.4f}"
+                writer.writerow([key, val])
+                averages[key] = val
                 Etot = averages.get('e').sum()
-                writer.writerow(['Emean dataset', f"{Etot/F_POINTS:.4f}"])
+                key = 'Emean dataset'
+                val = f"{Etot/F_POINTS:.4f}"
+                writer.writerow([key, val])
+                averages[key] = val
 
         logger.info(f"Metrics consolidated and saved to {dest_path}")
 
-        return [v for v in existing_data.values()]
+        return [v for v in existing_data.values()], averages
+
+    def update_resume(self, destination, totals):
+        # Resolve the final destination path for the CSV file.
+        dest_path = Path(get_output_directory(), destination)
+        if dest_path.is_dir():
+            dest_path = dest_path / 'consolidated.csv'
+
+        # Ensure the parent directory exists.
+        dest_path.parent.mkdir(exist_ok=True)
+
+        # Load Existing Data from CSV (if it exists)
+        existing_data, header, metric_keys_ordered, _ = self.load_current_data(dest_path)
+
+        # Consolidate New Metrics
+        # Add or update the new metrics into our dictionary of existing data.
+        existing_data.update(totals)
+        if not existing_data:
+            return
+
+        # Prepare for Writing (Sort and Define Header if New)
+        # If the file was new, define the header and key order now.
+        if not header:
+            metric_keys_ordered = list(SOD_NAMES.keys()) + DATASET_NAMES + list(VECT_NAMES)
+            header = ["ID"] + expand_header_keys(metric_keys_ordered)
+
+        # Sort the consolidated data alphabetically by ID.
+        sorted_ids = sorted(existing_data.keys())
+
+        # Write Consolidated File
+        with open(dest_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+
+            # Write the header.
+            writer.writerow(expand_header(header))
+
+            # Write the sorted data rows.
+            for id in sorted_ids:
+                metric_dict = existing_data[id]
+                row_data = [id] + expand_data_row(metric_dict, metric_keys_ordered)
+                writer.writerow(row_data)
+
+        logger.info(f"Resumed metrics consolidated and saved to {dest_path}")
+        return
 
 
 # Most code from Gemini 3 Pro

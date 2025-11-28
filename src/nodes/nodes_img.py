@@ -3027,6 +3027,9 @@ class ImageWithTextLabel(ComfyNodeABC):
 
 
 class CartesianProduct(ComfyNodeABC):
+    """
+    Produces a list with all the combinations from the items in list_A and list_B.
+    """
     @classmethod
     def INPUT_TYPES(s):
         return {

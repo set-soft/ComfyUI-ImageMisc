@@ -836,6 +836,7 @@ class SaliencyEvaluationMetrics(ComfyNodeABC):
         if names_len != imgs_len:
             raise ValueError(f"Got {imgs_len} images and {names_len} names, they must match")
 
+        prog_bar = ProgressBar(pred_len)
         for index_img in range(pred_len):
             # Ensure tensors are on the same device
             inputs_are_copies = get_canonical_device(prediction[index_img].device) != device
@@ -944,6 +945,7 @@ class SaliencyEvaluationMetrics(ComfyNodeABC):
                         f.write(','.join(expand_data_row(res, keys))+"\n")
 
                 all.append(res)
+                prog_bar.update(1)
 
         # Average metrics over the batch/es
         mae_avg = mae_total / gt_len

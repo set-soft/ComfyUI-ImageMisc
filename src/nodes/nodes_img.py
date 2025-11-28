@@ -19,10 +19,11 @@ import re
 from seconohe.apply_mask import apply_mask
 from seconohe.color import color_to_rgb_float, color_to_rgb_uint8
 from seconohe.comfy_misc import (get_input_directory, get_output_directory, MAX_RESOLUTION, PromptServer, IO, ComfyNodeABC,
-                                 ExecutionBlocker, upscale_methods)
+                                 ExecutionBlocker, upscale_methods, ProgressBar, get_annotated_filepath)
 from seconohe.downloader import download_file
 from seconohe.foreground_estimation.affce import affce
 from seconohe.foreground_estimation.fmlfe import fmlfe, IMPL_PRIORITY
+from seconohe.misc import format_bytes
 from seconohe.tensor import batched_min_max_norm
 from seconohe.torch import get_default_comfy_device, get_canonical_device
 import torch
@@ -3074,3 +3075,105 @@ class CartesianProduct(ComfyNodeABC):
                     res_B.append(b)
 
         return (res_A, res_B)
+
+
+class ImageMemoryEstimator:
+    """
+    Estimates the ammount of RAM needed to load the indicated images.
+    """
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "file_name": (IO.STRING, {
+                    "forceInput": True,
+                    "tooltip": "One or more image names. ComfyUI input dir is the base"}),
+                "is_image": (IO.BOOLEAN, {
+                    "default": True,
+                    "tooltip": "Compute three channels. Enable it and `is_mask` for RGBA"}),
+                "is_mask": (IO.BOOLEAN, {
+                    "default": False,
+                    "tooltip": "Compute one channel. Can be combined with `is_image`"}),
+            },
+            "hidden": {
+                "unique_id": "UNIQUE_ID",
+            },
+        }
+
+    INPUT_IS_LIST = True
+    RETURN_TYPES = ("INT", "STRING", "STRING")
+    RETURN_NAMES = ("total_bytes", "human_readable", "file_name")
+    OUTPUT_IS_LIST = (False, False, True)
+    FUNCTION = "execute"
+    CATEGORY = BASE_CATEGORY + "/" + VALIDATION
+    UNIQUE_NAME = "SET_ImageMemoryEstimator"
+    DISPLAY_NAME = "Image Memory Estimator"
+
+    def execute(self, file_name, is_image, is_mask, unique_id):
+        total_pixels = 0
+        min_area = float('inf')
+        max_area = 0
+        min_dim = (0, 0)
+        max_dim = (0, 0)
+        valid_count = 0
+
+        # Bytes per pixel for ComfyUI Tensors (Float32 = 4 bytes, RGB = 3 channels)
+        channels = 3 if is_image[0] else 0
+        channels += 1 if is_mask[0] else 0
+        if channels == 0:
+            logger.warning("Enable `is_image` and/or `is_mask`")
+        BYTES_PER_PIXEL = 4 * channels
+        logger.debug(f"BYTES_PER_PIXEL {BYTES_PER_PIXEL}")
+
+        for fname in file_name:
+            if fname is None:
+                continue
+            # Try to resolve path (handles both absolute paths and ComfyUI input folder files)
+            file_path = get_annotated_filepath(fname)
+
+            if not file_path or not os.path.exists(file_path):
+                logger.warning(f"Could not find file: {fname}")
+                continue
+
+            try:
+                # PIL.Image.open is lazy; it reads metadata without loading pixel data
+                with Image.open(file_path) as img:
+                    w, h = img.size
+                    area = w * h
+                    total_pixels += area
+
+                    if area < min_area:
+                        min_area = area
+                        min_dim = (w, h)
+
+                    if area > max_area:
+                        max_area = area
+                        max_dim = (w, h)
+
+                    valid_count += 1
+            except Exception as e:
+                logger.error(f"Failed to read metadata for {fname}: {e}")
+
+        total_bytes = total_pixels * BYTES_PER_PIXEL
+        human_readable = format_bytes(total_bytes)
+
+        # --- Information ---
+        logger.info("--- Image Memory Estimation ---")
+        msg = f"Number of images: {valid_count}"
+        logger.info(msg)
+        if valid_count > 0:
+            m = f"Minimum Dimensions: {min_dim[0]}x{min_dim[1]}"
+            logger.info(m)
+            msg += "<br>" + m
+            m = f"Maximum Dimensions: {max_dim[0]}x{max_dim[1]}"
+            logger.info(m)
+            msg += "<br>" + m
+            m = f"Total Raw Tensor Size: {human_readable} ({total_bytes} bytes)"
+            logger.info(m)
+            msg += "<br>" + m
+        else:
+            logger.info("No valid images processed.")
+        logger.info("-------------------------------")
+        send_progress_text(unique_id[0], msg)
+
+        return (total_bytes, human_readable, file_name)

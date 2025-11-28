@@ -219,9 +219,12 @@ def load_one_mask(file_name, disp_name, channel='red'):
                       "It may be corrupt or in an unsupported format.") from e
 
 
-def load_image_wrapper(file_name, embed_transparency, disp_name=None, show_preview=True):
+def load_image_wrapper(file_name, embed_transparency=False, disp_name=None, show_preview=True, channel=None):
     disp_name = disp_name or file_name
-    result = load_one_image(file_name, disp_name, embed_transparency)
+    if channel is not None:
+        result = load_one_mask(file_name, disp_name, channel)
+    else:
+        result = load_one_image(file_name, disp_name, embed_transparency)
     if not show_preview:
         return result
     return {"ui": {"images": [get_image_preview_info(file_name)]}, "result": result}

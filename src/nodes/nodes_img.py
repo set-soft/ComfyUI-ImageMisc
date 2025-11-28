@@ -1115,8 +1115,8 @@ class ConsolidateMetrics(ComfyNodeABC):
             raise ValueError(f"Got {n_metrics} metrics and {n_destination} destinations. They must be multiples.")
         if n_res_destination > 1:
             raise ValueError(f"Only one resume destination currently supported, got {n_res_destination}")
-        if n_res_destination and n_metric_ids != n_metrics:
-            raise ValueError(f"Got {n_metrics} metrics and {n_metric_ids} metric IDs. They must match.")
+        if n_res_destination and n_metric_ids != n_destination:
+            raise ValueError(f"Got {n_destination} destinations and {n_metric_ids} metric IDs. They must match.")
         slice_size = n_metrics // n_destination
 
         res = []
@@ -1126,7 +1126,7 @@ class ConsolidateMetrics(ComfyNodeABC):
             end = start + slice_size
             data, total = self.consolidate(metrics[start:end], img_name[start:end], d)
             res.append(data)
-            if n_res_destination:
+            if n_res_destination and total:
                 totals[metric_ids[c]] = total
 
         if totals:

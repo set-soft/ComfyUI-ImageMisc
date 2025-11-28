@@ -366,7 +366,7 @@ class ImageLoad(ComfyNodeABC):
 
 
 class MaskLoad(ComfyNodeABC):
-    """ Loads an image from any path using it as a mask """
+    """ Loads one or more images from any path using it as a mask """
     _color_channels = ["red", "green", "blue", "alpha"]
 
     @classmethod
@@ -395,7 +395,7 @@ class MaskLoad(ComfyNodeABC):
     FUNCTION = "execute"
     CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
     UNIQUE_NAME = "SET_MaskLoad"
-    DISPLAY_NAME = "Load Mask from Path"
+    DISPLAY_NAME = "Load Masks from Path"
     INPUT_IS_LIST = True
 
     def execute(self, file_name, batch_size, channel, show_preview):
@@ -405,6 +405,36 @@ class MaskLoad(ComfyNodeABC):
         show_preview = show_preview[0]
 
         return load_images_wrapper(file_name, show_preview=show_preview, batch_size=batch_size, channel=channel)
+
+
+class MaskLoadSingle(ComfyNodeABC):
+    """ Loads an image from any path using it as a mask """
+    _color_channels = ["red", "green", "blue", "alpha"]
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "file_name": (IO.STRING, {
+                    "tooltip": "The file name of the image to load"
+                }),
+            },
+            "optional": {
+                "channel": (cls._color_channels, ),
+                "show_preview": SHOW_PREVIEW
+            }
+        }
+
+    RETURN_TYPES = (IO.MASK, IO.STRING)
+    RETURN_NAMES = ("mask", "file_name")
+    FUNCTION = "execute"
+    CATEGORY = BASE_CATEGORY + "/" + IO_CATEGORY
+    UNIQUE_NAME = "SET_MaskLoadSingle"
+    DISPLAY_NAME = "Load one Mask from Path"
+
+    def execute(self, file_name, channel, show_preview):
+        logger.debug(f"Loading image {file_name} as mask using `{channel}` channel, show: {show_preview}")
+        return load_image_wrapper(file_name, show_preview=show_preview, channel=channel)
 
 
 class ImageSave(ComfyNodeABC):
@@ -754,6 +784,7 @@ class MaskDifference(ComfyNodeABC):
 class SaliencyEvaluationMetrics(ComfyNodeABC):
     """
     Computes popular metrics to evaluate Salient Object Detection methods.
+    All images in the workflow processed at once.
     """
     @classmethod
     def INPUT_TYPES(s):
@@ -971,6 +1002,29 @@ class SaliencyEvaluationMetrics(ComfyNodeABC):
         send_progress_text(unique_id, msg)
 
         return (all, img_name, mae_avg, f_measure_avg, s_measure_avg, e_measure_avg, weighted_f_avg)
+
+
+class SaliencyEvaluationMetricsSingle(SaliencyEvaluationMetrics):
+    """
+    Computes popular metrics to evaluate Salient Object Detection methods.
+    One image processed at a time.
+    """
+    OUTPUT_IS_LIST = (False, False, False, False, False, False, False)
+    INPUT_IS_LIST = False
+    CATEGORY = BASE_CATEGORY + "/" + "Analysis"
+    UNIQUE_NAME = "SET_SaliencyEvaluationMetricsSingle"
+    DISPLAY_NAME = "Saliency Evaluation Metrics (Single)"
+
+    def evaluate(self, prediction: torch.Tensor, ground_truth: torch.Tensor, unique_id,
+                 img_name, normalize, result_save: bool = False, mae_enable: bool = True, mae_save: bool = False,
+                 max_f_mes_enable: bool = True, max_f_mes_save: bool = False, s_mes_enable: bool = True,
+                 s_mes_save: bool = False, e_mes_enable: bool = True, e_mes_save: bool = False,
+                 wf_mes_enable: bool = True, wf_mes_save: bool = True):
+        # Just a wrapper around the list aware version
+        res = super().evaluate([prediction], [ground_truth], [unique_id], [img_name], [normalize], [result_save],
+                               [mae_enable], [mae_save], [max_f_mes_enable], [max_f_mes_save], [s_mes_enable],
+                               [s_mes_save], [e_mes_enable], [e_mes_save], [wf_mes_enable], [wf_mes_save])
+        return (res[0][0], res[1][0], res[2], res[3], res[4], res[5], res[6])
 
 
 class ConsolidateMetrics(ComfyNodeABC):

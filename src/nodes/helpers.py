@@ -313,7 +313,8 @@ def load_images_wrapper(file_names, embed_transparency=False, disp_names=None, s
                 all_preview_imgs.append(get_image_preview_info(file_name))
 
     logger.debug(f"Loaded {len(masks)} batches:")
-    for n, i in enumerate(masks):
+    items = masks if is_mask else imgs
+    for n, i in enumerate(items):
         logger.debug(f"{n}) {i.shape}")
 
     result = (imgs, masks, used_file_names) if channel is None else (masks, used_file_names)

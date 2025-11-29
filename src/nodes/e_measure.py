@@ -7,7 +7,7 @@ def get_e_measure(
     pred: torch.Tensor,
     gt: torch.Tensor,
     num_thresholds: int = F_POINTS,
-    chunk_size: int = 16
+    chunk_size: int = -1
 ) -> Tuple[float, float, float, torch.Tensor, torch.Tensor]:
     """
     Calculates the E-measure scores using a memory-efficient chunking strategy.
@@ -37,6 +37,10 @@ def get_e_measure(
     # Create a 1D tensor of thresholds from 0 to almost 1
     thlist = torch.linspace(0, 1 - 1e-10, num_thresholds, device=pred.device)
     all_scores = []
+
+    if chunk_size == -1:
+        chunk_size = round(64 / (pred.shape[0] * pred.shape[1] / (1<<20)))
+        chunk_size = min(max(1, chunk_size), num_thresholds)
 
     # Process thresholds in memory-efficient chunks
     for i in range(0, num_thresholds, chunk_size):

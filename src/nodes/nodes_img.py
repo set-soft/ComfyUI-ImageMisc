@@ -547,6 +547,12 @@ class ImageDataset(ComfyNodeABC):
                     "default": True,
                     "tooltip": "Block the execution when all images are processed"
                 }),
+                "invert": (IO.BOOLEAN, {
+                    "default": False,
+                    "tooltip": "Instead of listing the missing `destination` files\n"
+                               "we'll list the existing `destination` files.\n"
+                               "This can be used to collect generated information"
+                }),
             }
         }
 
@@ -566,7 +572,7 @@ class ImageDataset(ComfyNodeABC):
     @classmethod
     def IS_CHANGED(cls, source, pattern, destination, dest_ext, reference=None, sort_method="None",
                    image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1,
-                   block_when_finished=False):
+                   block_when_finished=False, invert=False):
         # We always indicate an evaluation is needed.
         # 1) We must check the directory to know it, so we don't have any advantage on doing it now.
         # 2) ComfyUI makes any check impossible, if source is connected to a node it will be None
@@ -574,7 +580,7 @@ class ImageDataset(ComfyNodeABC):
 
     def execute(self, source, pattern, destination, dest_ext, reference=None, sort_method="None",
                 image_load_cap=1, skip_first_images=0, select_every_nth=1, random_seed=1,
-                block_when_finished=False):
+                block_when_finished=False, invert=False):
         logger.debug(f"ImageDataset.source = {source}")
         logger.debug(f"ImageDataset.destination = {destination}")
         # Here self isn't really needed, our state is the filesystem
@@ -644,7 +650,7 @@ class ImageDataset(ComfyNodeABC):
             dest_path = dest_dir / dest_filename
 
             # Skip if the result file already exists
-            if dest_path.exists():
+            if dest_path.exists() ^ invert:
                 continue
 
             # Find the reference file (case-insensitive and extension-agnostic)
@@ -795,8 +801,60 @@ class SaliencyEvaluationMetrics(ComfyNodeABC):
     UNIQUE_NAME = "SET_SaliencyEvaluationMetrics"
     DISPLAY_NAME = "Saliency Evaluation Metrics"
 
+    def read_single(self, path):
+        if not path.is_file():
+            return None
+        with open(path, "rt") as f:
+            f.readline()
+            return float(f.readline())
+
+    def read_f(self, path):
+        if not path.is_file():
+            return None, None, None
+        f4 = torch.Tensor(size=(4, F_POINTS), device="cpu")
+        f1 = f4.movedim(1, 0)  # Easier here, not for computation
+        with open(path, "rt") as f:
+            reader = csv.reader(f)
+            next(reader)  # header
+            for c in range(F_POINTS):
+                f1[c] = torch.Tensor(tuple(float(v) for v in next(reader)))
+            next(reader)
+            row = next(reader)
+            assert row[0] == "Max", row
+            f_max = float(row[1])
+            row = next(reader)
+            assert row[0] == "Adaptive", row
+            f_adp = float(row[1])
+            return f_max, f4, f_adp
+
+    def read_e(self, path):
+        if not path.is_file():
+            return None, None, None, None, None
+        with open(path, "rt") as f:
+            reader = csv.reader(f)
+            next(reader)  # header
+            all_e = []
+            thres = []
+            for c in range(F_POINTS):
+                row = next(reader)
+                thres.append(float(row[0]))
+                all_e.append(float(row[1]))
+            thres = torch.Tensor(thres)
+            all_e = torch.Tensor(all_e)
+            next(reader)
+            row = next(reader)
+            assert row[0] == "Mean"
+            e_mean = float(row[1])
+            row = next(reader)
+            assert row[0] == "Max"
+            e_max = float(row[1])
+            row = next(reader)
+            assert row[0] == "Adaptive"
+            e_adp = float(row[1])
+            return e_mean, e_max, e_adp, all_e, thres
+
     def evaluate(self, prediction: torch.Tensor, ground_truth: torch.Tensor, unique_id,
-                 img_name, normalize, result_save: bool = False, mae_enable: bool = True, mae_save: bool = False,
+                 img_name, normalize: bool = False, result_save: bool = False, mae_enable: bool = True, mae_save: bool = False,
                  max_f_mes_enable: bool = True, max_f_mes_save: bool = False, s_mes_enable: bool = True,
                  s_mes_save: bool = False, e_mes_enable: bool = True, e_mes_save: bool = False,
                  wf_mes_enable: bool = True, wf_mes_save: bool = True):
@@ -868,75 +926,105 @@ class SaliencyEvaluationMetrics(ComfyNodeABC):
 
                 # 1. Mean Absolute Error (MAE)
                 if mae_enable:
-                    mae = torch.mean(torch.abs(pred_i - gt_i)).item()
-                    logger.debug(f"MAE: {mae}")
+                    mae_path = Path(imgp.parent, imgp.stem+"_mae.csv")
+                    mae = self.read_single(mae_path)
+                    if mae is None:
+                        mae = torch.mean(torch.abs(pred_i - gt_i)).item()
+                        logger.debug(f"MAE: {mae}")
+                        if mae_save:
+                            with open(mae_path, "wt") as f:
+                                f.write(f"MAE\n{mae}")
+                    else:
+                        logger.debug(f"MAE already computed: {mae}")
                     mae_total += mae
                     res['mae'] = mae
-                    if mae_save:
-                        with open(Path(imgp.parent, imgp.stem+"_mae.csv"), "wt") as f:
-                            f.write(f"MAE\n{mae}")
 
                 # --- Metrics requiring binary ground truth ---
-                if max_f_mes_enable or s_mes_enable or e_mes_enable or wf_mes_enable:
-                    gt_binary = (gt_i >= 0.5).float()
+                gt_binary = None
 
                 # 2. Max F-measure
                 if max_f_mes_enable:
-                    f_max, all_f, f_adp = get_f_measure(pred_i, gt_binary)
+                    f_path = Path(imgp.parent, imgp.stem+"_F.csv")
+                    f_max, all_f, f_adp = self.read_f(f_path)
+                    if f_max is None:
+                        gt_binary = (gt_i >= 0.5).float() if gt_binary is None else gt_binary
+                        f_max, all_f, f_adp = get_f_measure(pred_i, gt_binary)
+                        logger.debug(f"Fβmax: {f_max}")
+                        if max_f_mes_save:
+                            all_fp = all_f.movedim(1, 0)
+                            with open(f_path, "wt") as f:
+                                f.write("Threshold, F-measure, Precision, Recall\n")
+                                for fn in all_fp:
+                                    f.write(f"{fn[0]}, {fn[1]}, {fn[2]}, {fn[3]}\n")
+                                f.write(f"\nMax, {f_max}\n")
+                                f.write(f"Adaptive, {f_adp}\n")
+                    else:
+                        logger.debug(f"Fβmax already computed: {f_max}")
                     f_measure_max_total += f_max
-                    logger.debug(f"Fβmax: {f_max}")
                     res['max_f_mes'] = f_max
                     res['adp_f_mes'] = f_adp
                     res['f'] = all_f[1]
                     res['fp'] = all_f[2]
                     res['fr'] = all_f[3]
-                    if max_f_mes_save:
-                        with open(Path(imgp.parent, imgp.stem+"_F.csv"), "wt") as f:
-                            f.write("Threshold, F-measure\n")
-                            for fn in all_f:
-                                f.write(f"{fn[0]}, {fn[1]}\n")
-                            f.write(f"\nMax, {f_max}\n")
 
                 # 3. S-measure
                 if s_mes_enable:
-                    s_measure = get_s_measure(pred_i, gt_binary)
+                    s_path = Path(imgp.parent, imgp.stem+"_S.csv")
+                    s_measure = self.read_single(s_path)
+                    if s_measure is None:
+                        gt_binary = (gt_i >= 0.5).float() if gt_binary is None else gt_binary
+                        s_measure = get_s_measure(pred_i, gt_binary)
+                        logger.debug(f"Sα: {s_measure}")
+                        if s_mes_save:
+                            with open(s_path, "wt") as f:
+                                f.write(f"S-measure\n{s_measure}")
+                    else:
+                        logger.debug(f"Sα already computed: {s_measure}")
                     s_measure_total += s_measure
-                    logger.debug(f"Sα: {s_measure}")
                     res['s_mes'] = s_measure
-                    if s_mes_save:
-                        with open(Path(imgp.parent, imgp.stem+"_S.csv"), "wt") as f:
-                            f.write(f"S-measure\n{s_measure}")
 
                 # 4. E-measure
                 if e_mes_enable:
-                    e_mean, e_max, e_adp, all_e, thres = get_e_measure(pred_i, gt_binary)
+                    e_path = Path(imgp.parent, imgp.stem+"_E.csv")
+                    e_mean, e_max, e_adp, all_e, thres = self.read_e(e_path)
+                    if e_mean is None:
+                        gt_binary = (gt_i >= 0.5).float() if gt_binary is None else gt_binary
+                        e_mean, e_max, e_adp, all_e, thres = get_e_measure(pred_i, gt_binary)
+                        logger.debug(f"Eϕ: {e_mean} {e_max} {e_adp}")
+                        if e_mes_save:
+                            with open(e_path, "wt") as f:
+                                f.write("Threshold, E-measure\n")
+                                for index, en in enumerate(all_e):
+                                    f.write(f"{thres[index]}, {en}\n")
+                                f.write("\n")
+                                f.write(f"Mean, {e_mean}\n")
+                                f.write(f"Max, {e_max}\n")
+                                f.write(f"Adaptive, {e_adp}\n")
+                    else:
+                        logger.debug(f"Eϕ already computed: {e_mean} {e_max} {e_adp}")
                     e_measure_total += e_mean
                     e_measure_max_total += e_max
                     e_measure_adp_total += e_adp
-                    logger.debug(f"Eϕ: {e_mean} {e_max} {e_adp}")
                     res['e_mes'] = e_mean
                     res['max_e_mes'] = e_max
                     res['adp_e_mes'] = e_adp
                     res['e'] = all_e
-                    if e_mes_save:
-                        with open(Path(imgp.parent, imgp.stem+"_E.csv"), "wt") as f:
-                            f.write("Threshold, E-measure\n")
-                            for index, en in enumerate(all_e):
-                                f.write(f"{thres[index]}, {en}\n")
-                            f.write("\n")
-                            f.write(f"Mean, {e_mean}\n")
-                            f.write(f"Max, {e_max}\n")
-                            f.write(f"Adaptive, {e_adp}\n")
 
                 # 5. Weighted F-measure
                 if wf_mes_enable:
-                    wf = get_weighted_f_measure(pred_i, gt_binary)
+                    wf_path = Path(imgp.parent, imgp.stem+"_wF.csv")
+                    wf = self.read_single(wf_path)
+                    if wf is None:
+                        gt_binary = (gt_i >= 0.5).float() if gt_binary is None else gt_binary
+                        wf = get_weighted_f_measure(pred_i, gt_binary)
+                        logger.debug(f"Fβw: {wf}")
+                        if wf_mes_save:
+                            with open(wf_path, "wt") as f:
+                                f.write(f"Weighted F-measure\n{wf}")
+                    else:
+                        logger.debug(f"Fβw already computed: {wf}")
                     weighted_f_total += wf
-                    logger.debug(f"Fβw: {wf}")
                     res['wf_mes'] = wf
-                    if wf_mes_save:
-                        with open(Path(imgp.parent, imgp.stem+"_wF.csv"), "wt") as f:
-                            f.write(f"Weighted F-measure\n{wf}")
 
                 if result_save and res:
                     with open(Path(imgp.parent, imgp.stem+".csv"), "wt") as f:

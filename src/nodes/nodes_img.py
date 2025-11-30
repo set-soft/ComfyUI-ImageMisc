@@ -2612,6 +2612,29 @@ class ImagePad(ComfyNodeABC):
         return (out_image, out_masks)
 
 
+class ChooseUpscaleMethod(ComfyNodeABC):
+    """
+    Used to send the same upscale option to other nodes.
+    """
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "upscale_method": UPSCALE_OPT,
+            },
+        }
+
+    RETURN_TYPES = (IO.ANY,)
+    RETURN_NAMES = ("upscale_method",)
+    FUNCTION = "execute"
+    CATEGORY = BASE_CATEGORY + "/" + MANIPULATION_CATEGORY
+    UNIQUE_NAME = "SET_ChooseUpscaleMethod"
+    DISPLAY_NAME = "Choose Upscale Method"
+
+    def execute(self, upscale_method):
+        return (upscale_method, )
+
+
 # Adapted from KJNodes, credits to Kijai (ImageResizeKJv2)
 # Differences:
 # - The color is an string that support various formats

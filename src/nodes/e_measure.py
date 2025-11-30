@@ -39,7 +39,7 @@ def get_e_measure(
     all_scores = []
 
     if chunk_size == -1:
-        chunk_size = round(64 / (pred.shape[0] * pred.shape[1] / (1<<20)))
+        chunk_size = round(64 / (pred.shape[0] * pred.shape[1] / (1 << 20)))
         chunk_size = min(max(1, chunk_size), num_thresholds)
 
     # Process thresholds in memory-efficient chunks

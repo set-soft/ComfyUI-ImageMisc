@@ -3238,6 +3238,7 @@ class ImageMemoryEstimator:
         BYTES_PER_PIXEL = 4 * channels
         logger.debug(f"BYTES_PER_PIXEL {BYTES_PER_PIXEL}")
 
+        known = set()
         for fname in file_name:
             if fname is None:
                 continue
@@ -3246,6 +3247,9 @@ class ImageMemoryEstimator:
 
             if not file_path or not os.path.exists(file_path):
                 logger.warning(f"Could not find file: {fname}")
+                continue
+
+            if file_path in known:
                 continue
 
             try:
@@ -3264,6 +3268,7 @@ class ImageMemoryEstimator:
                         max_dim = (w, h)
 
                     valid_count += 1
+                    known.add(file_path)
             except Exception as e:
                 logger.error(f"Failed to read metadata for {fname}: {e}")
 

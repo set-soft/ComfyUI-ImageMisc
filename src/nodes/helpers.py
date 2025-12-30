@@ -352,6 +352,8 @@ def save_image(images, filenames, prompt=None, extra_pnginfo=None, compress_leve
 
     all_preview_imgs = []
     for index, (image, filename) in enumerate(zip(imgs, filenames)):
+        if filename is None:
+            continue
         i = 255. * image.cpu().numpy()
         img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
         metadata = PngInfo()
